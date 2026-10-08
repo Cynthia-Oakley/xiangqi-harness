@@ -31,7 +31,7 @@ def test_horse_initial():
 
 
 def test_horse_leg_blocked():
-    b = Board.from_fen("k8/9/9/9/9/9/9/9/1p6/1N2K4 w - - 0 1")
+    b = Board.from_fen("k8/9/9/9/9/9/9/9/1p7/1N2K4 w - - 0 1")
     d = dests(b, "b0")           # 红马 (9,1)，马腿 (8,1) 被黑卒蹩住
     assert (7, 0) not in d and (7, 2) not in d
     assert (8, 3) in d           # 侧向马腿 (9,2) 空，不受影响
@@ -75,7 +75,7 @@ def test_pawn_before_and_after_river():
     b = Board.from_fen("4k4/9/9/9/9/9/9/9/4P4/4K4 w - - 0 1")
     d = dests(b, "e1")           # 红兵 (8,4) 未过河
     assert d == {(7, 4)}         # 只能向前
-    b2 = Board.from_fen("4k4/9/9/9/9/4P4/9/9/9/4K4 w - - 0 1")
+    b2 = Board.from_fen("4k4/9/9/9/4P4/9/9/9/9/4K4 w - - 0 1")
     d2 = dests(b2, "e5")         # 红兵 (4,4) 已过河
     assert (3, 4) in d2 and (4, 3) in d2 and (4, 5) in d2
     assert (5, 4) not in d2      # 兵不后退
