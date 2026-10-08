@@ -1,0 +1,3 @@
+xiangqi
+xqcli
+xqserver
