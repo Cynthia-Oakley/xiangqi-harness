@@ -23,10 +23,15 @@ def create_app(data_dir="data") -> FastAPI:
     app = FastAPI(title="Xiangqi Arena")
     store = Store(data_dir)
     subscribers: dict[str, list[asyncio.Queue]] = {}
+    notes_persisted: dict[str, int] = {}   # gid → 已落盘的 note 条数（防重复写入）
 
     def broadcast(gid, event, payload):
         for q in subscribers.get(gid, []):
             q.put_nowait({"event": event, "data": payload})
+
+    def persist_note(g: Game, n: dict):
+        store.append_record(g, {"type": "note", **n})
+        notes_persisted[g.id] = notes_persisted.get(g.id, 0) + 1
 
     def get_game(gid) -> Game:
         try:
@@ -75,7 +80,8 @@ def create_app(data_dir="data") -> FastAPI:
                          increment=body.increment,
                          draw_halfmoves=body.draw_halfmoves)
         return {"game_id": g.id, "red_token": g.tokens["r"],
-                "black_token": g.tokens["b"], "watch_url": f"/watch/{g.id}"}
+                "black_token": g.tokens["b"],
+                "watch_url": f"/api/games/{g.id}/spectate"}
 
     @app.get("/api/games/{gid}/state")
     async def state(gid: str, x_seat_token: str | None = Header(None)):
@@ -103,9 +109,9 @@ def create_app(data_dir="data") -> FastAPI:
         g = get_game(gid)
         entry = g.commit(seat_color(g, x_seat_token), body.pending_id)
         store.append_record(g, {"type": "move", **entry})
-        for n in g.notes:
-            if n["ply"] == entry["ply"]:
-                store.append_record(g, {"type": "note", **n})
+        done = notes_persisted.get(gid, 0)
+        for n in g.notes[done:]:         # 只落盘尚未持久化的 note（含 move 附带的）
+            persist_note(g, n)
         broadcast(gid, "move", entry)
         if g.result:
             broadcast(gid, "result", {"result": g.result, "reason": g.result_reason})
@@ -126,7 +132,7 @@ def create_app(data_dir="data") -> FastAPI:
         color = seat_color(g, x_seat_token)
         g.add_note(color, body.text)
         n = g.notes[-1]
-        store.append_record(g, {"type": "note", **n})
+        persist_note(g, n)
         broadcast(gid, "note", n)   # 只去观战 SSE；Agent 无任何接口能读到
         return {"ok": True}
 
@@ -155,6 +161,9 @@ def create_app(data_dir="data") -> FastAPI:
         g = get_game(gid)
         color = seat_color(g, x_seat_token)
         for _ in range(300):        # 最长 30s
+            if g.settle_timeout():   # 轮询中发现超时：广播终局后退出
+                broadcast(gid, "result", {"result": g.result, "reason": g.result_reason})
+                break
             if g.result or len(g.history) > ply:
                 break
             await asyncio.sleep(0.1)

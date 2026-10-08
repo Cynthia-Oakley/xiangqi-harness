@@ -58,11 +58,10 @@ def serve(host: str = "127.0.0.1", port: int = 8000, data_dir: str = "data"):
 @app.command()
 def new(red_name: str, black_name: str, server: str = DEFAULT_SERVER,
         time_limit: str = "15m", step_time: str = "3m", increment: int = 10):
-    def secs(s: str) -> float:
-        return float(s[:-1]) * (60 if s.endswith("m") else 1)
     r = httpx.post(f"{server}/api/games", json={
         "red_name": red_name, "black_name": black_name,
-        "base_seconds": secs(time_limit), "step_seconds": secs(step_time),
+        "base_seconds": parse_duration(time_limit),
+        "step_seconds": parse_duration(step_time),
         "increment": increment,
     })
     g = show(r)
@@ -71,14 +70,29 @@ def new(red_name: str, black_name: str, server: str = DEFAULT_SERVER,
     seats.mkdir(exist_ok=True)
     for color, cn in (("r", "red"), ("b", "black")):
         p = render_agent_prompt(g["game_id"], color, g[f"{cn}_token"], server, step_time)
-        (seats / f"{g['game_id']}-{cn}.md").write_text(p, encoding="utf-8")
+        md = seats / f"{g['game_id']}-{cn}.md"
+        md.write_text(p, encoding="utf-8")
+        os.chmod(md, 0o600)               # 提示词文件含座位令牌
     typer.echo(json.dumps(g, ensure_ascii=False, indent=2))
     typer.echo(f"提示词已写入 seats/ 目录；观战 SSE: {server}/api/games/{g['game_id']}/spectate")
 
 
+def parse_duration(s: str) -> float:
+    """'15m' → 900，'45s'/'45' → 45。"""
+    if s.endswith("m"):
+        return float(s[:-1]) * 60
+    return float(s.rstrip("s"))
+
+
 @app.command()
 def join(game_id: str, color: str, token: str, server: str = DEFAULT_SERVER):
-    c = "r" if color.startswith("r") else "b"
+    if color.lower().startswith("r"):
+        c = "r"
+    elif color.lower().startswith("b"):
+        c = "b"
+    else:
+        typer.echo(f"颜色只能是 red 或 black: {color!r}", err=True)
+        raise typer.Exit(1)
     save_seat({"server": server, "game_id": game_id, "color": c, "token": token})
     typer.echo(f"已入座 {color}，对局 {game_id}")
 

@@ -133,3 +133,31 @@ async def test_notes_not_in_state(client):
 async def test_game_not_found(client):
     r = await client.get("/api/games/nope/state", headers={"X-Seat-Token": "x"})
     assert r.status_code == 404
+
+
+async def test_notes_not_duplicated_in_jsonl(client, tmp_path):
+    """I1 回归：每条思考在棋谱里只出现一次。"""
+    g = await new_game(client)
+    gid = g["game_id"]
+    await client.post(f"/api/games/{gid}/note", json={"text": "单独思考"},
+                      headers={"X-Seat-Token": g["red_token"]})
+    r = await client.post(f"/api/games/{gid}/move",
+                          json={"move": "h2e2", "note": "走棋思考"},
+                          headers={"X-Seat-Token": g["red_token"]})
+    pv = r.json()
+    await client.post(f"/api/games/{gid}/commit",
+                      json={"pending_id": pv["pending_id"]},
+                      headers={"X-Seat-Token": g["red_token"]})
+    log = (tmp_path / "games" / f"{gid}.jsonl").read_text(encoding="utf-8")
+    assert log.count("单独思考") == 1
+    assert log.count("走棋思考") == 1
+
+
+async def test_timeout_settled_on_state(client):
+    """I2 回归：走棋方超时后不行动，对手查 state 也能拿到终局。"""
+    g = await new_game(client, step_seconds=0.2, increment=0)
+    await asyncio.sleep(0.4)
+    st = await client.get(f"/api/games/{g['game_id']}/state",
+                          headers={"X-Seat-Token": g["black_token"]})
+    assert st.json()["result"] == "black_win"
+    assert st.json()["result_reason"] == "timeout"

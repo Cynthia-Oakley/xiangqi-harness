@@ -66,15 +66,23 @@ class Game:
             "step_remaining": None if self.result else round(self.step_seconds - self._elapsed(), 1),
         }
 
+    def settle_timeout(self):
+        """非抛出版超时结算：任何查询入口都可调用，让对局不再因双方不操作而悬置。"""
+        with self.lock:
+            if self.result:
+                return False
+            side = self.board.turn
+            if self._elapsed() > self.step_seconds or self.remaining[side] - self._elapsed() <= 0:
+                self.result = "black_win" if side == RED else "red_win"
+                self.result_reason = "timeout"
+                return True
+            return False
+
     def _expire_if_timeout(self):
         """在走棋方操作入口结算超时；超时即判负并抛 GameOver。"""
+        self.settle_timeout()
         if self.result:
-            raise GameOver(f"对局已结束: {self.result}")
-        side = self.board.turn
-        if self._elapsed() > self.step_seconds or self.remaining[side] - self._elapsed() <= 0:
-            self.result = "black_win" if side == RED else "red_win"
-            self.result_reason = "timeout"
-            raise GameOver(f"{self.names[side]} 超时，判负")
+            raise GameOver(f"对局已结束: {self.result}（{self.names[self.board.turn]} 超时判负）")
 
     # ---- 走棋 ----
     def propose_move(self, color, iccs, note=None):
@@ -197,6 +205,7 @@ class Game:
     # ---- 对 Agent 的状态视图（不含 notes！）----
     def state_for(self, color):
         with self.lock:
+            self.settle_timeout()        # 查询也结算超时，避免对局悬置
             return {
                 "game_id": self.id,
                 "your_color": color,

@@ -14,7 +14,7 @@ TEMPLATE = """# 中国象棋对弈任务
 
 ## 第一步：入座
 ```bash
-xq join {game_id} --color {color} --token {token} --server {server}
+xq join {game_id} {color} {token} --server {server}
 ```
 
 ## 对弈循环（严格遵守）
