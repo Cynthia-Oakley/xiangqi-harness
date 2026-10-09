@@ -56,6 +56,26 @@ def serve(host: str = "127.0.0.1", port: int = 8000, data_dir: str = "data"):
 
 
 @app.command()
+def arena(red_name: str, black_name: str, port: int = 8000,
+          base_dir: str = "arena", data_dir: str = "data",
+          time_limit: str = "15m", step_time: str = "3m", increment: int = 10):
+    """一条命令搭好一场 Agent 对局：自动拉起服务器、建对局、建目录、预入座。"""
+    import sys
+    from xqcli.arena import ensure_server, setup_arena
+    xq_cmd = str(Path(sys.argv[0]).resolve())
+    server = f"http://127.0.0.1:{port}"
+    reused = ensure_server(server, xq_cmd, port, data_dir)
+    typer.echo("裁判服务器：" + ("已在运行，直接复用" if reused else f"已后台拉起（日志 {data_dir}/serve.log）"))
+    info = setup_arena(red_name, black_name, server, base_dir, xq_cmd,
+                       time_limit, step_time, increment)
+    typer.echo(f"对局 {info['game_id']} 已创建，双方已预入座：")
+    typer.echo(f"  红方({red_name}) 工作目录: {info['dirs']['red']}")
+    typer.echo(f"  黑方({black_name}) 工作目录: {info['dirs']['black']}")
+    typer.echo("把各目录里的 PROMPT.md 喂给对应 harness（工作目录设为该目录）即可开赛。")
+    typer.echo(f"观战: curl -N {info['spectate']}")
+
+
+@app.command()
 def new(red_name: str, black_name: str, server: str = DEFAULT_SERVER,
         time_limit: str = "15m", step_time: str = "3m", increment: int = 10):
     r = httpx.post(f"{server}/api/games", json={

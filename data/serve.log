@@ -1,0 +1,14 @@
+INFO:     Started server process [43607]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:51748 - "GET /api/rules HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51750 - "POST /api/games HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51781 - "GET /api/rules HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51783 - "POST /api/games HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51785 - "POST /api/games/g-20261009-085158-16af6f/move HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51787 - "POST /api/games/g-20261009-085158-16af6f/commit HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [43607]

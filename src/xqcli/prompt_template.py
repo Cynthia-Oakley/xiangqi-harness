@@ -11,10 +11,10 @@ TEMPLATE = """# 中国象棋对弈任务
 - 对局 ID: {game_id}
 - 座位令牌: {token}
 - 裁判服务器: {server}
-
+{xq_note}
 ## 第一步：入座
 ```bash
-xq join {game_id} {color} {token} --server {server}
+{xq_cmd} join {game_id} {color} {token} --server {server}
 ```
 
 ## 对弈循环（严格遵守）
@@ -43,9 +43,13 @@ xq join {game_id} {color} {token} --server {server}
 """
 
 
-def render_agent_prompt(game_id, color, token, server, step_time="3 分钟"):
+def render_agent_prompt(game_id, color, token, server, step_time="3 分钟",
+                        xq_cmd="xq"):
+    xq_note = ("" if xq_cmd == "xq" else
+               f"\n> 注意：本环境中 `xq` 命令的完整路径是 `{xq_cmd}`，用它替换下文所有 `xq`。\n")
     return TEMPLATE.format(
         side_guide=RED_GUIDE if color == "r" else BLACK_GUIDE,
         game_id=game_id, color="red" if color == "r" else "black",
         token=token, server=server, step_time=step_time,
+        xq_cmd=xq_cmd, xq_note=xq_note,
     )
