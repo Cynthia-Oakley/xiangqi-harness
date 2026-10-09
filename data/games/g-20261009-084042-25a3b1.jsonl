@@ -1,5 +1,0 @@
-{"type": "note", "ply": 1, "color": "r", "text": "红方思考：中路突破，先架中炮", "ts": 1791506473.459}
-{"type": "move", "ply": 1, "color": "r", "iccs": "h2e2", "chinese": "炮二平五", "elapsed": 31.61, "fen": "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C2C4/9/RNBAKABNR b - - 1 1"}
-{"type": "note", "ply": 1, "color": "r", "text": "意图：炮二平五", "ts": 1791506473.587}
-{"type": "move", "ply": 2, "color": "b", "iccs": "b9c7", "chinese": "马2进3", "elapsed": 12.92, "fen": "r1bakabnr/9/1cn4c1/p1p1p1p1p/9/9/P1P1P1P1P/1C2C4/9/RNBAKABNR w - - 2 2"}
-{"type": "note", "ply": 2, "color": "b", "text": "黑方思考：马8进7护中卒", "ts": 1791506486.648}

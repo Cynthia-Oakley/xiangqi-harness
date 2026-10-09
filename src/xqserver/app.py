@@ -2,9 +2,10 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from xiangqi.rules import legal_moves
@@ -180,6 +181,7 @@ def create_app(data_dir="data") -> FastAPI:
                 "fen": g.board.to_fen(), "history": g.history,
                 "notes": g.notes, "clocks": g.clocks(),
                 "names": g.names, "result": g.result,
+                "result_reason": g.result_reason,
             }
             yield f"event: snapshot\ndata: {json.dumps(snapshot, ensure_ascii=False)}\n\n"
             try:
@@ -192,6 +194,11 @@ def create_app(data_dir="data") -> FastAPI:
                 subscribers[gid].remove(q)
 
         return StreamingResponse(stream(), media_type="text/event-stream")
+
+    @app.get("/watch/{gid}")
+    async def watch_page(gid: str):
+        return FileResponse(Path(__file__).parent / "static" / "watch.html",
+                            media_type="text/html")
 
     @app.get("/api/rules")
     async def rules():

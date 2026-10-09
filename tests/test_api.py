@@ -135,6 +135,16 @@ async def test_game_not_found(client):
     assert r.status_code == 404
 
 
+async def test_watch_page_served(client):
+    """观战页：无需鉴权，内嵌 EventSource 指向 spectate 流。"""
+    g = await new_game(client)
+    r = await client.get(f"/watch/{g['game_id']}")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "EventSource" in r.text and "/api/games/" in r.text
+    assert "楚河" in r.text                        # 象棋元素
+
+
 async def test_notes_not_duplicated_in_jsonl(client, tmp_path):
     """I1 回归：每条思考在棋谱里只出现一次。"""
     g = await new_game(client)

@@ -72,7 +72,8 @@ def arena(red_name: str, black_name: str, port: int = 8000,
     typer.echo(f"  红方({red_name}) 工作目录: {info['dirs']['red']}")
     typer.echo(f"  黑方({black_name}) 工作目录: {info['dirs']['black']}")
     typer.echo("把各目录里的 PROMPT.md 喂给对应 harness（工作目录设为该目录）即可开赛。")
-    typer.echo(f"观战: curl -N {info['spectate']}")
+    typer.echo(f"浏览器观战: {server}/watch/{info['game_id']}")
+    typer.echo(f"文本观战: curl -N {info['spectate']}")
 
 
 @app.command()
@@ -94,7 +95,8 @@ def new(red_name: str, black_name: str, server: str = DEFAULT_SERVER,
         md.write_text(p, encoding="utf-8")
         os.chmod(md, 0o600)               # 提示词文件含座位令牌
     typer.echo(json.dumps(g, ensure_ascii=False, indent=2))
-    typer.echo(f"提示词已写入 seats/ 目录；观战 SSE: {server}/api/games/{g['game_id']}/spectate")
+    typer.echo(f"提示词已写入 seats/ 目录；浏览器观战: {server}/watch/{g['game_id']}")
+    typer.echo(f"文本观战: curl -N {server}/api/games/{g['game_id']}/spectate")
 
 
 def parse_duration(s: str) -> float:
