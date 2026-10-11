@@ -91,6 +91,21 @@ def test_two_phase_commit():
     assert g.notes[0]["text"] == "架中炮" and g.notes[0]["color"] == "r"
 
 
+def test_capture_feedback_in_last_move():
+    g = make_game()
+    seq = (("r", "c3c4"), ("b", "b9c7"), ("r", "b0c2"), ("b", "h9g7"),
+           ("r", "c2b4"), ("b", "g9e7"))
+    for color, iccs in seq:
+        pv = g.propose_move(color, iccs)
+        g.commit(color, pv["pending_id"])
+    pv = g.propose_move("r", "b2b7")                     # 红炮借b4马为架吃黑炮
+    assert pv["captured"] == "c"
+    g.commit("r", pv["pending_id"])
+    assert g.history[-1]["captured"] == "c"              # 记入棋谱
+    assert g.state_for("b")["last_move"]["captured_glyph"] == "砲"
+    assert g.state_for("r")["last_move"]["captured_glyph"] == "砲"
+
+
 def test_cancel_then_repropose():
     g = make_game()
     pv = g.propose_move("r", "h2e2")

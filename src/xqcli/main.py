@@ -7,6 +7,8 @@ from pathlib import Path
 import httpx
 import typer
 
+from xiangqi.textboard import GLYPHS
+
 app = typer.Typer(help="Xiangqi Arena CLI")
 SEAT_FILE = Path(".xqseat.json")
 DEFAULT_SERVER = "http://127.0.0.1:8000"
@@ -60,7 +62,11 @@ def print_state(st: dict):
     lm = st.get("last_move")
     if lm:
         who = "红" if lm["color"] == "r" else "黑"
-        typer.echo(f"上一步: {who} {lm['chinese']} ({lm['iccs']}) 用时 {int(lm['elapsed'])}s")
+        cap = f" 吃: {lm['captured_glyph']}" if lm.get("captured_glyph") else ""
+        typer.echo(f"上一步: {who} {lm['chinese']} ({lm['iccs']}) 用时 {int(lm['elapsed'])}s{cap}")
+    if st.get("your_color") == "b":
+        typer.echo("路数对照(中文记谱): 你的黑方 N路 = 第N列字母（a=1路 b=2路 … i=9路）；"
+                   "红方相反（i=一路 … a=九路）")
     if st.get("in_check"):
         typer.echo("!! 将军：你正被将军，本步必须应将 !!")
     if st["result"]:
@@ -263,7 +269,10 @@ def log(json_out: bool = typer.Option(False, "--json")):
         return
     for m in d["moves"]:
         who = "红" if m["color"] == "r" else "黑"
-        typer.echo(f"{m['ply']}. {who} {m['chinese']} ({m['iccs']}) {int(m['elapsed'])}s")
+        cap = ""
+        if m.get("captured"):
+            cap = f" 吃{GLYPHS[m['captured']]}"
+        typer.echo(f"{m['ply']}. {who} {m['chinese']} ({m['iccs']}) {int(m['elapsed'])}s{cap}")
     echo_time(d)
 
 
@@ -282,7 +291,7 @@ def board_image(out: str = "board.png"):
         raise typer.Exit(1)
     Path(out).write_bytes(r.content)
     typer.echo(f"已保存 {out}（400x444 PNG，{len(r.content) / 1024:.0f}KB，"
-               f"视觉预算约 240 tokens；按你的视角渲染）。"
+               f"视觉预算约 240 tokens；红方标准视角，与 ICCS/ASCII 同一参照系）。"
                "用你 harness 的看图能力打开它核对局面。")
 
 

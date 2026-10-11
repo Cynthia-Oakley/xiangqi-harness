@@ -23,17 +23,14 @@ def test_render_move():
 
 
 def test_render_black_perspective():
-    """P0-2：黑方视角旋转 180°，黑方底线（將在 e9）在倒数第一行。"""
+    """统一参照系：黑方视角参数保留兼容但不再翻转，仍渲染红方标准视角。"""
     s = render_ascii(Board.initial(), perspective="b")
     lines = s.splitlines()
-    assert lines[0].startswith("视角: 黑方")
-    assert lines[1].strip().startswith("i") and lines[1].strip().endswith("a")
+    assert lines[0].startswith("视角: 红方标准视角")
+    assert lines[1].strip().startswith("a") and lines[1].strip().endswith("i")
     rows = lines[2:12]
-    assert rows[0].startswith("0") and "帅" in rows[0]
-    assert rows[-1].startswith("9") and "將" in rows[-1]
-    # 同一格子两种视角下glyph一致：e9 的將在 i..a 第 5 列（行标占 split 后第 1 位）
-    row_black = rows[-1].split()
-    assert row_black[5] == "將"
+    assert rows[0].startswith("9") and "將" in rows[0]
+    assert rows[-1].startswith("0") and "帅" in rows[-1]
 
 
 def test_piece_listing():

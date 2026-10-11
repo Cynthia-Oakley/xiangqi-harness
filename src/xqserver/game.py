@@ -7,7 +7,7 @@ import time
 from xiangqi.board import Board, RED, BLACK, iccs_to_rc
 from xiangqi.notation import to_chinese
 from xiangqi.rules import apply_move, explain_illegal, game_result, in_check, legal_moves
-from xiangqi.textboard import piece_listing, render_ascii
+from xiangqi.textboard import GLYPHS, piece_listing, render_ascii
 
 
 class AuthError(Exception):
@@ -158,6 +158,7 @@ class Game:
                 "color": side,
                 "iccs": "pass",
                 "chinese": "停着",
+                "captured": None,
                 "elapsed": round(elapsed, 2),
                 "fen": self.board.to_fen(),
             }
@@ -226,7 +227,7 @@ class Game:
                 "fen_after": nb.to_fen(),
                 "opp_replies": len(legal_moves(nb, opp)),
                 "expires_in": round(expires_in, 1),
-                "ascii": render_ascii(nb, perspective=color),
+                "ascii": render_ascii(nb),
                 "pieces": piece_listing(nb),
                 "time_status": self.time_status(color),
             }
@@ -236,11 +237,13 @@ class Game:
         elapsed = self._elapsed()
         color = self.pending["color"]
         iccs = self.pending["move"]
+        captured = self.board.grid[iccs_to_rc(iccs[2:])[0]][iccs_to_rc(iccs[2:])[1]]
         entry = {
             "ply": len(self.history) + 1,
             "color": color,
             "iccs": iccs,
             "chinese": to_chinese(self.board, iccs),
+            "captured": captured,
             "elapsed": round(elapsed, 2),
         }
         self.board = self.pending["board_after"]
@@ -272,7 +275,7 @@ class Game:
             self._expire_if_timeout()
             entry = self._settle_commit()
             return entry | {"time_status": self.time_status(color),
-                            "ascii": render_ascii(self.board, perspective=color),
+                            "ascii": render_ascii(self.board),
                             "pieces": piece_listing(self.board)}
 
     def play(self, color, iccs, expect=None, note=None):
@@ -299,7 +302,7 @@ class Game:
             }
             entry = self._settle_commit()
             return entry | {"time_status": self.time_status(color),
-                            "ascii": render_ascii(self.board, perspective=color),
+                            "ascii": render_ascii(self.board),
                             "pieces": piece_listing(self.board)}
 
     def cancel(self, color, pending_id):
@@ -389,7 +392,7 @@ class Game:
                 "joined": dict(self.joined),
                 "your_turn": self.started and self.board.turn == color and self.result is None,
                 "fen": self.board.to_fen(),
-                "ascii": render_ascii(self.board, perspective=color),
+                "ascii": render_ascii(self.board),
                 "pieces": piece_listing(self.board),
                 "ply": len(self.history),
                 "result": self.result,
@@ -398,7 +401,9 @@ class Game:
                 "step_elapsed": (None if self.result or not self.started
                                  else round(self._elapsed(), 1)),
                 "last_move": (None if not self.history else {
-                    k: self.history[-1][k] for k in ("color", "iccs", "chinese", "elapsed")}),
+                    k: self.history[-1][k] for k in ("color", "iccs", "chinese", "elapsed")}
+                    | {"captured_glyph": (GLYPHS[self.history[-1]["captured"]]
+                                          if self.history[-1].get("captured") else None)}),
                 "time_status": self.time_status(color),
                 "clocks": self.clocks(),
                 "draw_offered": self.draw_offered_by is not None and self.draw_offered_by != color,

@@ -404,7 +404,7 @@ async def test_play_page_route(client):
 
 
 async def test_board_png_endpoint(client):
-    """棋盘截图：PNG 格式、按座位视角渲染（黑方翻转）、令牌错误 403。"""
+    """棋盘截图：PNG 格式、统一红方标准视角（黑方不再翻转）、令牌错误 403。"""
     g = await new_game(client)
     gid = g["game_id"]
     r = await client.get(f"/api/games/{gid}/board.png")
@@ -416,6 +416,6 @@ async def test_board_png_endpoint(client):
     black = await client.get(f"/api/games/{gid}/board.png",
                              params={"token": g["black_token"]})
     assert red.status_code == black.status_code == 200
-    assert red.content != black.content                # 黑方视角已翻转
+    assert red.content == black.content                 # 统一参照系：视角不再按座位翻转
     bad = await client.get(f"/api/games/{gid}/board.png", params={"token": "wrong"})
     assert bad.status_code == 403
