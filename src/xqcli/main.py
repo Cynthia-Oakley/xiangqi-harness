@@ -200,8 +200,23 @@ def join(game_id: str, color: str, token: str, server: str = DEFAULT_SERVER):
                    "双方入座后计时才开始。")
 
 
+def refresh_board_image(seat) -> bool:
+    """静默把当前棋盘截图刷新为 ./board.png；失败不致命。"""
+    try:
+        with client(seat) as c:
+            r = c.get(f"/api/games/{seat['game_id']}/board.png")
+        if r.status_code < 400:
+            Path("board.png").write_bytes(r.content)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 @app.command()
-def state(json_out: bool = typer.Option(False, "--json")):
+def state(json_out: bool = typer.Option(False, "--json"),
+          no_image: bool = typer.Option(False, "--no-image",
+                                        help="不自动刷新 board.png")):
     seat = load_seat()
     with client(seat) as c:
         st = show(c.get(f"/api/games/{seat['game_id']}/state"))
@@ -209,6 +224,8 @@ def state(json_out: bool = typer.Option(False, "--json")):
         typer.echo(json.dumps(st, ensure_ascii=False))
         return
     print_state(st)
+    if not no_image and refresh_board_image(seat):
+        typer.echo("♟ 棋盘截图已刷新: board.png（先打开它核对局面，再决定走法）")
 
 
 @app.command(name="legal-moves")
@@ -362,7 +379,9 @@ def note(text: str):
 
 
 @app.command()
-def wait(json_out: bool = typer.Option(False, "--json")):
+def wait(json_out: bool = typer.Option(False, "--json"),
+         no_image: bool = typer.Option(False, "--no-image",
+                                       help="不自动刷新 board.png")):
     seat = load_seat()
     with client(seat) as c:
         st = show(c.get(f"/api/games/{seat['game_id']}/state"))
@@ -373,6 +392,8 @@ def wait(json_out: bool = typer.Option(False, "--json")):
         typer.echo(json.dumps(st, ensure_ascii=False))
         return
     print_state(st)
+    if not no_image and refresh_board_image(seat):
+        typer.echo("♟ 棋盘截图已刷新: board.png（先打开它核对局面，再决定走法）")
 
 
 @app.command()
