@@ -227,7 +227,7 @@ class Game:
                 "fen_after": nb.to_fen(),
                 "opp_replies": len(legal_moves(nb, opp)),
                 "expires_in": round(expires_in, 1),
-                "ascii": render_ascii(nb),
+                "ascii": render_ascii(nb, perspective=color),
                 "pieces": piece_listing(nb),
                 "time_status": self.time_status(color),
             }
@@ -275,7 +275,7 @@ class Game:
             self._expire_if_timeout()
             entry = self._settle_commit()
             return entry | {"time_status": self.time_status(color),
-                            "ascii": render_ascii(self.board),
+                            "ascii": render_ascii(self.board, perspective=color),
                             "pieces": piece_listing(self.board)}
 
     def play(self, color, iccs, expect=None, note=None):
@@ -302,7 +302,7 @@ class Game:
             }
             entry = self._settle_commit()
             return entry | {"time_status": self.time_status(color),
-                            "ascii": render_ascii(self.board),
+                            "ascii": render_ascii(self.board, perspective=color),
                             "pieces": piece_listing(self.board)}
 
     def cancel(self, color, pending_id):
@@ -392,7 +392,7 @@ class Game:
                 "joined": dict(self.joined),
                 "your_turn": self.started and self.board.turn == color and self.result is None,
                 "fen": self.board.to_fen(),
-                "ascii": render_ascii(self.board),
+                "ascii": render_ascii(self.board, perspective=color),
                 "pieces": piece_listing(self.board),
                 "ply": len(self.history),
                 "result": self.result,

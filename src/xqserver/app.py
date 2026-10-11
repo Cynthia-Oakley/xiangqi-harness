@@ -173,13 +173,13 @@ def create_app(data_dir="data", idle_minutes: float = 60, on_shutdown=None) -> F
     @app.get("/api/games/{gid}/board.png")
     async def board_png(gid: str, token: str | None = None,
                         x_seat_token: str | None = Header(None)):
-        """当前棋盘 PNG（400x444，约 240 tokens）。统一红方标准视角，与 ICCS/ASCII 同参照系。"""
+        """当前棋盘 PNG（400x444，约 240 tokens）。带座位令牌时按该方视角（黑方翻转）。"""
         g = get_game(gid)
-        if token or x_seat_token:
-            seat_color(g, token or x_seat_token)     # 仍校验令牌有效性
+        tok = token or x_seat_token
+        perspective = seat_color(g, tok) if tok else "r"
         last = (g.history[-1]["iccs"]
                 if g.history and g.history[-1]["iccs"] != "pass" else None)
-        return Response(render_board_png(g.board, last_move=last),
+        return Response(render_board_png(g.board, perspective, last),
                         media_type="image/png",
                         headers={"Cache-Control": "no-store"})
 

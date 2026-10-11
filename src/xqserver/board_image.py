@@ -1,7 +1,8 @@
 """棋盘 PNG 渲染：给支持看图的模型一个低 token 的视觉校准入口。
 
 设计目标是小图（400x444，Claude 估算约 240 tokens），线条清晰、无装饰。
-统一红方标准视角（红方在下方），与 ASCII 棋盘、ICCS 坐标保持同一参照系。
+按行棋方视角渲染（自己的棋子在下方）；perspective="b" 时棋盘 180° 翻转，
+与 ASCII 棋盘的视角约定一致；坐标系始终是 ICCS（翻转后列左→右为 i→a）。
 """
 
 import io
@@ -44,14 +45,16 @@ def _font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-def _xy(row: int, col: int, flip: bool = False) -> tuple[int, int]:
-    """逻辑格点 → 屏幕像素。row 0 = 黑方底线（红方视角的顶部）。flip 保留兼容，不再生效。"""
+def _xy(row: int, col: int, flip: bool) -> tuple[int, int]:
+    """逻辑格点 → 屏幕像素。row 0 = 黑方底线（红方视角的顶部）。"""
+    if flip:
+        row, col = 9 - row, 8 - col
     return M + col * S, M + row * S
 
 
 def render_board(board, perspective: str = RED,
                  last_move: str | None = None) -> Image.Image:
-    flip = False                       # 统一红方标准视角，与 ASCII/ICCS 同一参照系
+    flip = perspective != RED
     img = Image.new("RGB", (W, H), C_BG)
     d = ImageDraw.Draw(img)
 

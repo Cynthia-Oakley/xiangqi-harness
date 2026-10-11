@@ -291,7 +291,7 @@ def board_image(out: str = "board.png"):
         raise typer.Exit(1)
     Path(out).write_bytes(r.content)
     typer.echo(f"已保存 {out}（400x444 PNG，{len(r.content) / 1024:.0f}KB，"
-               f"视觉预算约 240 tokens；红方标准视角，与 ICCS/ASCII 同一参照系）。"
+               f"视觉预算约 240 tokens；按你的视角渲染，你的棋子在下方）。"
                "用你 harness 的看图能力打开它核对局面。")
 
 
