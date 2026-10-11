@@ -56,6 +56,10 @@ def print_state(st: dict):
     typer.echo(f"轮到你: {st['your_turn']}  时钟: {st['clocks']}")
     if st.get("time_status"):
         typer.echo("⏱ " + st["time_status"])
+    lm = st.get("last_move")
+    if lm:
+        who = "红" if lm["color"] == "r" else "黑"
+        typer.echo(f"上一步: {who} {lm['chinese']} ({lm['iccs']}) 用时 {int(lm['elapsed'])}s")
     if st.get("in_check"):
         typer.echo("!! 将军：你正被将军，本步必须应将 !!")
     if st["result"]:
@@ -154,19 +158,53 @@ def join(game_id: str, color: str, token: str, server: str = DEFAULT_SERVER):
 
 
 @app.command()
-def state():
-    seat = load_seat()
-    with client(seat) as c:
-        print_state(show(c.get(f"/api/games/{seat['game_id']}/state")))
-
-
-@app.command(name="legal-moves")
-def legal_moves_cmd():
+def state(json_out: bool = typer.Option(False, "--json")):
     seat = load_seat()
     with client(seat) as c:
         st = show(c.get(f"/api/games/{seat['game_id']}/state"))
-    typer.echo(" ".join(st.get("legal_moves", [])) or "（未轮到你或对局结束）")
-    echo_time(st)
+    if json_out:
+        typer.echo(json.dumps(st, ensure_ascii=False))
+        return
+    print_state(st)
+
+
+@app.command(name="legal-moves")
+def legal_moves_cmd(from_square: str | None = typer.Option(None, "--from"),
+                    json_out: bool = typer.Option(False, "--json")):
+    seat = load_seat()
+    with client(seat) as c:
+        d = show(c.get(f"/api/games/{seat['game_id']}/moves"))
+    moves = d["moves"]
+    if from_square:
+        moves = [m for m in moves if m["iccs"].startswith(from_square)]
+    if json_out:
+        typer.echo(json.dumps(moves, ensure_ascii=False))
+        return
+    if not moves:
+        typer.echo("（未轮到你或对局结束）")
+    else:
+        groups: dict[str, list[str]] = {}
+        for m in moves:
+            label = f"{m['chinese'][0]}({m['iccs'][:2]})"
+            suffix = ("x" if m["capture"] else "") + ("+" if m["gives_check"] else "")
+            groups.setdefault(label, []).append(f"{m['chinese']} {m['iccs']}{suffix}")
+        for label, items in groups.items():
+            typer.echo(f"{label}: " + " / ".join(items))
+    echo_time(d)
+
+
+@app.command()
+def log(json_out: bool = typer.Option(False, "--json")):
+    seat = load_seat()
+    with client(seat) as c:
+        d = show(c.get(f"/api/games/{seat['game_id']}/log"))
+    if json_out:
+        typer.echo(json.dumps(d["moves"], ensure_ascii=False))
+        return
+    for m in d["moves"]:
+        who = "红" if m["color"] == "r" else "黑"
+        typer.echo(f"{m['ply']}. {who} {m['chinese']} ({m['iccs']}) {int(m['elapsed'])}s")
+    echo_time(d)
 
 
 @app.command()
@@ -178,6 +216,26 @@ def move(iccs: str, note: str | None = None):
     typer.echo(json.dumps(pv, ensure_ascii=False, indent=2))
     typer.echo("核对无误后: xq commit " + pv["pending_id"])
     echo_time(pv)
+
+
+@app.command()
+def play(iccs: str, expect: str | None = typer.Option(None, "--expect"),
+         note: str | None = typer.Option(None, "--note")):
+    """原子走子：--expect 先填你自己推出的中文着法，服务器核对一致才真正落子。"""
+    seat = load_seat()
+    with client(seat) as c:
+        resp = c.post(f"/api/games/{seat['game_id']}/play",
+                      json={"move": iccs, "expect": expect, "note": note})
+    if resp.status_code >= 400:
+        try:
+            body = resp.json()
+        except Exception:
+            body = {}
+        typer.echo(f"错误({resp.status_code}): {body.get('error', resp.text)}", err=True)
+        raise typer.Exit(1)
+    d = resp.json()
+    typer.echo(json.dumps(d, ensure_ascii=False, indent=2))
+    echo_time(d)
 
 
 @app.command()
@@ -210,14 +268,17 @@ def note(text: str):
 
 
 @app.command()
-def wait():
+def wait(json_out: bool = typer.Option(False, "--json")):
     seat = load_seat()
     with client(seat) as c:
         st = show(c.get(f"/api/games/{seat['game_id']}/state"))
         while not st["your_turn"] and not st["result"]:
             st = show(c.get(f"/api/games/{seat['game_id']}/wait",
                             params={"ply": st["ply"]}))
-        print_state(st)
+    if json_out:
+        typer.echo(json.dumps(st, ensure_ascii=False))
+        return
+    print_state(st)
 
 
 @app.command()

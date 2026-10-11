@@ -2,6 +2,7 @@
 
 from xiangqi.board import Board, RED, BLACK, iccs_to_rc, rc_to_iccs
 from xiangqi.moves import pseudo_destinations
+from xiangqi.notation import is_valid_iccs
 
 
 class IllegalMove(Exception):
@@ -34,6 +35,37 @@ def in_check(board: Board, side: str) -> bool:
                 if (gr, gc) in pseudo_destinations(board, r, c):
                     return True
     return False
+
+
+_PSEUDO_HINTS = {"N": "蹩马腿或走位不符", "B": "塞象眼、过河或走位不符",
+                 "C": "移动需无阻隔、吃子需恰一个炮架"}
+
+
+def explain_illegal(board: Board, side: str, iccs) -> str | None:
+    """走法不合法时给出中文原因；合法返回 None。"""
+    if not is_valid_iccs(iccs):
+        return "格式不是 4 字符 ICCS（如 h2e2）"
+    (fr, fc), (tr, tc) = iccs_to_rc(iccs[:2]), iccs_to_rc(iccs[2:])
+    p = board.grid[fr][fc]
+    if p is None:
+        return "起点格没有棋子"
+    if p.isupper() != (side == RED):
+        return "不能走对方的棋子"
+    t = board.grid[tr][tc]
+    if t is not None and t.isupper() == p.isupper():
+        return "目标格是己方棋子"
+    if t in ("K", "k"):
+        return "将帅不可被吃（已将军时应走其他着法）"
+    if (tr, tc) not in pseudo_destinations(board, fr, fc):
+        return _PSEUDO_HINTS.get(p.upper(), "走位不合该子规则")
+    nb = board.copy()
+    nb.grid[tr][tc] = p
+    nb.grid[fr][fc] = None
+    if in_check(nb, side):
+        return "走后己方被将军（送将/该子正被钉住）"
+    if generals_face(nb):
+        return "走后两帅将照面（白脸将）"
+    return None
 
 
 def legal_moves(board: Board, side: str) -> list[str]:

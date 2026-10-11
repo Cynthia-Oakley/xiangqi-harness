@@ -76,3 +76,63 @@ def test_illegal_move_raises():
 def test_draw_by_halfmove_clock():
     b = Board.from_fen("4k4/9/9/9/9/9/9/9/9/4K4 w - - 120 61")
     assert game_result(b) == "draw"
+
+
+def test_explain_illegal_none_for_legal():
+    from xiangqi.rules import explain_illegal
+    b = Board.initial()
+    assert explain_illegal(b, "r", "h2e2") is None
+
+
+def test_explain_illegal_format():
+    from xiangqi.rules import explain_illegal
+    b = Board.initial()
+    assert "ICCS" in explain_illegal(b, "r", "z9z9")
+    assert "ICCS" in explain_illegal(b, "r", "h2e")
+
+
+def test_explain_illegal_empty_source():
+    from xiangqi.rules import explain_illegal
+    b = Board.initial()
+    assert explain_illegal(b, "r", "e4e5") == "起点格没有棋子"
+
+
+def test_explain_illegal_opponent_piece():
+    from xiangqi.rules import explain_illegal
+    b = Board.initial()
+    assert explain_illegal(b, "r", "b9c7") == "不能走对方的棋子"
+
+
+def test_explain_illegal_own_target():
+    from xiangqi.rules import explain_illegal
+    b = Board.initial()
+    assert explain_illegal(b, "r", "a0b0") == "目标格是己方棋子"
+
+
+def test_explain_illegal_horse_leg():
+    from xiangqi.rules import explain_illegal
+    # b1 放一个红兵：红马 b0 两个日字点都被蹩住
+    b = Board.from_fen("rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/1P7/RNBAKABNR w - - 0 1")
+    assert explain_illegal(b, "r", "b0a2") == "蹩马腿或走位不符"
+    assert explain_illegal(b, "r", "b0c2") == "蹩马腿或走位不符"
+
+
+def test_explain_illegal_general_range():
+    from xiangqi.rules import explain_illegal
+    b = Board.initial()
+    assert explain_illegal(b, "r", "e0e2") == "走位不合该子规则"
+
+
+def test_explain_illegal_self_check_pin():
+    from xiangqi.rules import explain_illegal
+    # 红车 d2 沿 d 路钉住黑马 d7（背后是黑将 d9），马走开即送将
+    b = Board.from_fen("3k5/9/3n5/9/9/9/9/3R5/9/9 b - - 0 1")
+    assert explain_illegal(b, "b", "d7f8") == "走后己方被将军（送将/该子正被钉住）"
+
+
+def test_explain_illegal_flying_general():
+    from xiangqi.rules import explain_illegal
+    # 红炮 e2 是帅将之间唯一的遮挡，炮无论直走横走离开都会白脸将
+    b = Board.from_fen("4k4/9/9/9/9/9/9/4C4/9/4K4 w - - 0 1")
+    assert explain_illegal(b, "r", "e2e3") is None   # 炮直走仍挡在 e 路，合法
+    assert explain_illegal(b, "r", "e2d2") == "走后两帅将照面（白脸将）"

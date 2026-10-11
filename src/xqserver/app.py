@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from xiangqi.rules import legal_moves
-from xqserver.game import AuthError, Game, GameOver, RuleError, TurnError
+from xqserver.game import AuthError, ExpectMismatch, Game, GameOver, RuleError, TurnError
 from xqserver.store import Store
 
 RULES_TEXT = """中国象棋规则速查（ICCS 坐标：列 a-i 红方视角从左到右，行 0-9，0 为红方底线）
@@ -70,6 +70,10 @@ def create_app(data_dir="data") -> FastAPI:
     async def over_err(request, e):
         return JSONResponse({"error": str(e)}, 409)
 
+    @app.exception_handler(ExpectMismatch)
+    async def expect_err(request, e):
+        return JSONResponse({"error": str(e), "actual": e.actual}, 400)
+
     @app.exception_handler(RuleError)
     async def rule_err(request, e):
         return JSONResponse({"error": str(e)}, 400)
@@ -118,6 +122,21 @@ def create_app(data_dir="data") -> FastAPI:
             st["legal_moves"] = legal_moves(g.board, color)
         return st
 
+    @app.get("/api/games/{gid}/log")
+    async def game_log(gid: str, x_seat_token: str | None = Header(None)):
+        g = get_game(gid)
+        color = seat_color(g, x_seat_token)
+        return {"moves": [{k: e[k] for k in ("ply", "color", "iccs", "chinese", "elapsed")}
+                          for e in g.history],
+                "time_status": g.time_status(color)}
+
+    @app.get("/api/games/{gid}/moves")
+    async def moves_endpoint(gid: str, x_seat_token: str | None = Header(None)):
+        g = get_game(gid)
+        color = seat_color(g, x_seat_token)
+        return {"moves": g.moves_detail(color),
+                "time_status": g.time_status(color)}
+
     class MoveIn(BaseModel):
         move: str
         note: str | None = None
@@ -129,6 +148,24 @@ def create_app(data_dir="data") -> FastAPI:
             return g.propose_move(seat_color(g, x_seat_token), body.move, body.note)
         finally:
             flush_events(g)
+
+    class PlayIn(BaseModel):
+        move: str
+        expect: str | None = None
+        note: str | None = None
+
+    @app.post("/api/games/{gid}/play")
+    async def play(gid: str, body: PlayIn, x_seat_token: str | None = Header(None)):
+        g = get_game(gid)
+        try:
+            entry = g.play(seat_color(g, x_seat_token), body.move,
+                           expect=body.expect, note=body.note)
+        finally:
+            flush_events(g)
+        done = notes_persisted.get(gid, 0)
+        for n in g.notes[done:]:         # 只落盘尚未持久化的 note（含 play 附带的）
+            persist_note(g, n)
+        return entry | {"result": g.result, "result_reason": g.result_reason}
 
     class PendingIn(BaseModel):
         pending_id: str

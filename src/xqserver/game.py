@@ -5,8 +5,8 @@ import threading
 import time
 
 from xiangqi.board import Board, RED, BLACK, iccs_to_rc
-from xiangqi.notation import is_valid_iccs, to_chinese
-from xiangqi.rules import apply_move, game_result, in_check, legal_moves
+from xiangqi.notation import to_chinese
+from xiangqi.rules import apply_move, explain_illegal, game_result, in_check, legal_moves
 from xiangqi.textboard import render_ascii
 
 
@@ -24,6 +24,14 @@ class TurnError(RuleError):
 
 class GameOver(RuleError):
     pass
+
+
+class ExpectMismatch(RuleError):
+    """原子走子的 expect 核对失败：不落子，携带实际中文着法。"""
+
+    def __init__(self, message, actual):
+        super().__init__(message)
+        self.actual = actual
 
 
 def _fmt_secs(x):
@@ -181,24 +189,26 @@ class Game:
             raise GameOver(f"对局已结束: {self.result}（{self.names[self.board.turn]} 超时判负）")
 
     # ---- 走棋 ----
+    def _check_can_move(self, color):
+        self._expire_if_timeout()
+        if not self.started:
+            opp = BLACK if color == RED else RED
+            raise RuleError(f"对局尚未开始：等待 {self.names[opp]} 入座后计时才开始")
+        if color != self.board.turn:
+            raise TurnError(f"还没轮到{self.names[color]}走棋")
+
     def propose_move(self, color, iccs, note=None):
         with self.lock:
-            self._expire_if_timeout()
-            if not self.started:
-                opp = BLACK if color == RED else RED
-                raise RuleError(f"对局尚未开始：等待 {self.names[opp]} 入座后计时才开始")
-            if color != self.board.turn:
-                raise TurnError(f"还没轮到{self.names[color]}走棋")
-            if not is_valid_iccs(iccs):
-                raise RuleError(f"走法格式错误: {iccs!r}（应为 4 字符 ICCS，如 h2e2）")
-            if iccs not in legal_moves(self.board, color):
-                raise RuleError(f"非法走法: {iccs}")
+            self._check_can_move(color)
+            reason = explain_illegal(self.board, color, iccs)
+            if reason:
+                raise RuleError(f"非法走法: {iccs} —— {reason}")
             nb = apply_move(self.board, iccs)
             (fr, fc), (tr, tc) = iccs_to_rc(iccs[:2]), iccs_to_rc(iccs[2:])
             opp = BLACK if color == RED else RED
             expires_in = max(0.0, min(60.0, self.step_seconds - self._elapsed()))
             self.pending = {
-                "id": secrets.token_urlsafe(8),
+                "id": "p" + secrets.token_urlsafe(8),
                 "color": color,
                 "move": iccs,
                 "board_after": nb,
@@ -219,6 +229,35 @@ class Game:
                 "time_status": self.time_status(color),
             }
 
+    def _settle_commit(self):
+        """真正把 pending 落子：扣本步耗时、加秒、记谱、广播、终局判定。返回 history entry。"""
+        elapsed = self._elapsed()
+        color = self.pending["color"]
+        iccs = self.pending["move"]
+        entry = {
+            "ply": len(self.history) + 1,
+            "color": color,
+            "iccs": iccs,
+            "chinese": to_chinese(self.board, iccs),
+            "elapsed": round(elapsed, 2),
+        }
+        self.board = self.pending["board_after"]
+        self.pending = None
+        self.remaining[color] = self.remaining[color] - elapsed + self.increment
+        self.turn_started = time.monotonic()
+        self.draw_offered_by = None
+        entry["fen"] = self.board.to_fen()
+        self.history.append(entry)
+        self.events.append({"event": "move",
+                            "data": entry | {"clocks": self.clocks()}})
+        if self.remaining[color] <= 0:
+            self._finish("black_win" if color == RED else "red_win", "timeout")
+        else:
+            res = game_result(self.board, self.draw_halfmoves)
+            if res:
+                self._finish(res, "halfmove_limit" if res == "draw" else "checkmate")
+        return entry
+
     def commit(self, color, pending_id):
         with self.lock:
             if not self.pending or self.pending["id"] != pending_id:
@@ -229,30 +268,32 @@ class Game:
                 self.pending = None
                 raise RuleError("预览已过期，请重新 move")
             self._expire_if_timeout()
-            elapsed = self._elapsed()
-            iccs = self.pending["move"]
-            entry = {
-                "ply": len(self.history) + 1,
+            entry = self._settle_commit()
+            return entry | {"time_status": self.time_status(color)}
+
+    def play(self, color, iccs, expect=None, note=None):
+        """原子走子：校验 + 可选 expect 核对后直接提交，不经过挂单。"""
+        with self.lock:
+            self._check_can_move(color)
+            reason = explain_illegal(self.board, color, iccs)
+            if reason:
+                raise RuleError(f"非法走法: {iccs} —— {reason}")
+            chinese = to_chinese(self.board, iccs)
+            if expect and expect != chinese:
+                raise ExpectMismatch(
+                    f"预期着法不符：你预期的是 {expect}，实际将是 {chinese}"
+                    "——未落子，请修正后重试", actual=chinese)
+            nb = apply_move(self.board, iccs)
+            if note:
+                self._append_note(color, note)
+            self.pending = {
+                "id": "p" + secrets.token_urlsafe(8),
                 "color": color,
-                "iccs": iccs,
-                "chinese": to_chinese(self.board, iccs),
-                "elapsed": round(elapsed, 2),
+                "move": iccs,
+                "board_after": nb,
+                "expires": time.monotonic() + 60.0,
             }
-            self.board = self.pending["board_after"]
-            self.pending = None
-            self.remaining[color] = self.remaining[color] - elapsed + self.increment
-            self.turn_started = time.monotonic()
-            self.draw_offered_by = None
-            entry["fen"] = self.board.to_fen()
-            self.history.append(entry)
-            self.events.append({"event": "move",
-                                "data": entry | {"clocks": self.clocks()}})
-            if self.remaining[color] <= 0:
-                self._finish("black_win" if color == RED else "red_win", "timeout")
-            else:
-                res = game_result(self.board, self.draw_halfmoves)
-                if res:
-                    self._finish(res, "halfmove_limit" if res == "draw" else "checkmate")
+            entry = self._settle_commit()
             return entry | {"time_status": self.time_status(color)}
 
     def cancel(self, color, pending_id):
@@ -262,6 +303,28 @@ class Game:
             if self.pending["color"] != color:
                 raise TurnError("不能取消对方的走法")
             self.pending = None
+
+    def moves_detail(self, color):
+        """轮到 color 时给出结构化合法走法（中文/吃子/将军）；否则空列表。"""
+        with self.lock:
+            self.settle_timeout()
+            if self.result or not self.started or self.board.turn != color:
+                return []
+            out = []
+            for iccs in legal_moves(self.board, color):
+                (fr, fc), (tr, tc) = iccs_to_rc(iccs[:2]), iccs_to_rc(iccs[2:])
+                piece = self.board.grid[fr][fc]
+                nb = apply_move(self.board, iccs)
+                opp = BLACK if color == RED else RED
+                out.append({
+                    "iccs": iccs,
+                    "chinese": to_chinese(self.board, iccs),
+                    "capture": self.board.grid[tr][tc] is not None,
+                    "gives_check": in_check(nb, opp),
+                    "piece": piece,
+                })
+            out.sort(key=lambda m: (m["piece"].upper(), m["iccs"][:2]))
+            return out
 
     # ---- 思考流（只对观战者可见）----
     def _append_note(self, color, text):
@@ -312,7 +375,7 @@ class Game:
                 "joined": dict(self.joined),
                 "your_turn": self.started and self.board.turn == color and self.result is None,
                 "fen": self.board.to_fen(),
-                "ascii": render_ascii(self.board),
+                "ascii": render_ascii(self.board, perspective=color),
                 "ply": len(self.history),
                 "result": self.result,
                 "result_reason": self.result_reason,

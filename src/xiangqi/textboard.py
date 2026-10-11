@@ -8,10 +8,15 @@ GLYPHS = {
 }
 
 
-def render_ascii(board: Board) -> str:
-    lines = ["  " + " ".join("abcdefghi")]
+def render_ascii(board: Board, perspective: str = "r") -> str:
+    """perspective="b" 时旋转 180°：黑方底线在底部（行标 9），列从左到右 i..a。"""
+    black_view = perspective == "b"
+    grid = ([list(reversed(r)) for r in reversed(board.grid)]
+            if black_view else board.grid)
+    header = "ihgfedcba" if black_view else "abcdefghi"
+    lines = ["  " + " ".join(header)]
     for row in range(10):
-        rank = 9 - row
-        cells = [GLYPHS[p] if p else "＋" for p in board.grid[row]]
+        rank = row if black_view else 9 - row
+        cells = [GLYPHS[p] if p else "＋" for p in grid[row]]
         lines.append(f"{rank} " + " ".join(cells))
     return "\n".join(lines)

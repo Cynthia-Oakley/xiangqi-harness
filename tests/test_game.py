@@ -293,3 +293,60 @@ def test_state_hides_notes():
     assert "notes" not in st and "秘密计划" not in str(st)
     st_r = g.state_for("r")
     assert "notes" not in st_r           # 自己的 note 也不经 state 回传
+
+
+def test_pending_id_is_option_safe():
+    """P0-3：pending_id 永远以字母开头，不会被 Typer 当成选项。"""
+    g = make_game()
+    for _ in range(200):
+        pv = g.propose_move("r", "h2e2")
+        pid = pv["pending_id"]
+        assert pid[0].isalpha()
+        g.cancel("r", pid)
+
+
+def test_play_atomic_commit():
+    """P1-5：原子落子直接生效，轮转换边、记谱、扣钟、加秒与 commit 一致。"""
+    g = make_game()
+    entry = g.play("r", "h2e2", expect="炮二平五")
+    assert entry["ply"] == 1 and entry["color"] == "r"
+    assert entry["iccs"] == "h2e2" and entry["chinese"] == "炮二平五"
+    assert "time_status" in entry
+    assert g.board.turn == "b" and g.pending is None
+    assert len(g.history) == 1 and g.history[0]["chinese"] == "炮二平五"
+    # 轮到黑方
+    entry2 = g.play("b", "b9c7")
+    assert entry2["ply"] == 2 and g.board.turn == "r"
+
+
+def test_play_expect_mismatch_keeps_board():
+    """P1-5：expect 不符不落子，报错带实际中文着法。"""
+    g = make_game()
+    with pytest.raises(RuleError) as ei:
+        g.play("r", "h2e2", expect="炮八平五")
+    assert "未落子" in str(ei.value) or "实际是" in str(ei.value)
+    assert g.board.turn == "r" and not g.history and g.pending is None
+
+
+def test_play_illegal_rejected():
+    """P1-5：非法走法原子命令同样拒绝。"""
+    g = make_game()
+    with pytest.raises(RuleError):
+        g.play("r", "h2e3")
+    assert not g.history
+
+
+def test_moves_detail_capture_and_check():
+    """P1-8：moves_detail 标记吃子与将军；不轮到自己时为空。"""
+    from xiangqi.board import Board
+    g = make_game()
+    g.board = Board.from_fen("4k4/9/9/9/4p4/9/9/4R4/9/4K4 w - - 0 1")
+    moves = {m["iccs"]: m for m in g.moves_detail("r")}
+    assert moves["e2e5"]["capture"] is True          # 车吃中卒
+    assert moves["e2e5"]["gives_check"] is True      # 吃完将军
+    assert g.moves_detail("b") == []                 # 未轮到黑方
+    # 无遮挡时车进到底线将军但不吃子
+    g.board = Board.from_fen("4k4/9/9/9/p8/9/9/4R4/9/4K4 w - - 0 1")
+    moves = {m["iccs"]: m for m in g.moves_detail("r")}
+    assert moves["e2e7"]["gives_check"] is True
+    assert moves["e2e7"]["capture"] is False

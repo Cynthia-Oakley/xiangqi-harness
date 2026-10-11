@@ -300,3 +300,84 @@ async def test_timeout_settled_on_state(client):
                           headers={"X-Seat-Token": g["black_token"]})
     assert st.json()["result"] == "black_win"
     assert st.json()["result_reason"] == "timeout"
+
+
+async def test_log_endpoint(client):
+    """P0-1：着法日志端点返回 history 摘要，需座位令牌鉴权。"""
+    g = await new_game(client)
+    await join_both(client, g)
+    gid = g["game_id"]
+    pv = (await client.post(f"/api/games/{gid}/move", json={"move": "h2e2"},
+                            headers={"X-Seat-Token": g["red_token"]})).json()
+    await client.post(f"/api/games/{gid}/commit",
+                      json={"pending_id": pv["pending_id"]},
+                      headers={"X-Seat-Token": g["red_token"]})
+    r = await client.get(f"/api/games/{gid}/log",
+                         headers={"X-Seat-Token": g["black_token"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert "time_status" in body
+    assert len(body["moves"]) == 1
+    m = body["moves"][0]
+    assert m["ply"] == 1 and m["color"] == "r" and m["iccs"] == "h2e2"
+    assert m["chinese"] == "炮二平五" and m["elapsed"] >= 0
+    r2 = await client.get(f"/api/games/{gid}/log")
+    assert r2.status_code == 403
+
+
+async def test_play_endpoint(client):
+    """P1-5：原子走子端点——相符/缺省 expect 落子，不符返回 400 且带 actual。"""
+    g = await new_game(client)
+    await join_both(client, g)
+    gid = g["game_id"]
+    h = {"X-Seat-Token": g["red_token"]}
+    r = await client.post(f"/api/games/{gid}/play",
+                          json={"move": "h2e2", "expect": "炮八平五"}, headers=h)
+    assert r.status_code == 400
+    assert "actual" in r.json() and r.json()["actual"] == "炮二平五"
+    st = (await client.get(f"/api/games/{gid}/state", headers=h)).json()
+    assert st["ply"] == 0                    # 未落子
+    r = await client.post(f"/api/games/{gid}/play",
+                          json={"move": "h2e2", "expect": "炮二平五"}, headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["chinese"] == "炮二平五" and body["result"] is None
+    assert "time_status" in body
+    st = (await client.get(f"/api/games/{gid}/state", headers=h)).json()
+    assert st["ply"] == 1 and st["turn"] == "b"
+    # 无 expect 也照走
+    hb = {"X-Seat-Token": g["black_token"]}
+    r = await client.post(f"/api/games/{gid}/play",
+                          json={"move": "b9c7", "note": "跳马"}, headers=hb)
+    assert r.status_code == 200 and r.json()["ply"] == 2
+    # 非法走法 400
+    r = await client.post(f"/api/games/{gid}/play",
+                          json={"move": "h2e3"}, headers=h)
+    assert r.status_code == 400
+
+
+async def test_moves_endpoint(client):
+    """P1-8：结构化走法端点——轮到该方返回带中文/吃子/将军标记的列表。"""
+    g = await new_game(client)
+    await join_both(client, g)
+    gid = g["game_id"]
+    r = await client.get(f"/api/games/{gid}/moves",
+                         headers={"X-Seat-Token": g["red_token"]})
+    assert r.status_code == 200
+    moves = r.json()["moves"]
+    assert moves
+    assert all({"iccs", "chinese", "capture", "gives_check", "piece"} <= set(m)
+               for m in moves)
+    cannon = [m for m in moves if m["iccs"] == "h2e2"][0]
+    assert cannon["chinese"] == "炮二平五" and cannon["piece"] == "C"
+    assert cannon["capture"] is False and cannon["gives_check"] is False
+    # 先按棋子类型再按起点坐标排序
+    keys = [(m["piece"].upper(), m["iccs"][:2]) for m in moves]
+    assert keys == sorted(keys)
+    # 未轮到的一方拿到空列表
+    r2 = await client.get(f"/api/games/{gid}/moves",
+                          headers={"X-Seat-Token": g["black_token"]})
+    assert r2.status_code == 200 and r2.json()["moves"] == []
+    # 未鉴权 403
+    r3 = await client.get(f"/api/games/{gid}/moves")
+    assert r3.status_code == 403
