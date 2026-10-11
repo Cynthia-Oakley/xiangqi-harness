@@ -19,6 +19,16 @@ def test_prompt_template_content():
     assert "黑方" in p2 and "tok456" in p2
 
 
+def test_prompt_time_management_section():
+    p = render_agent_prompt("g-1", "r", "tok123", "http://127.0.0.1:8000",
+                            time_limit="15 分钟", increment=10)
+    assert "时间管理" in p
+    assert "15 分钟" in p and "+10" in p        # 局时与加秒
+    assert "时间状态" in p                       # 告知每条命令都带时间行
+    p2 = render_agent_prompt("g-1", "r", "tok123", "http://127.0.0.1:8000")
+    assert "时间管理" in p2                      # 默认值也能渲染
+
+
 def test_seat_file_permissions(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     import importlib

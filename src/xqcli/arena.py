@@ -56,7 +56,9 @@ def setup_arena(red_name: str, black_name: str, server: str,
         d = Path(base_dir) / f"{gid}-{cn}"
         d.mkdir(parents=True, exist_ok=True)
         prompt = render_agent_prompt(gid, color, g[f"{cn}_token"], server,
-                                     xq_cmd=xq_cmd, step_timeout=step_timeout)
+                                     step_time=step_time, xq_cmd=xq_cmd,
+                                     step_timeout=step_timeout,
+                                     time_limit=time_limit, increment=increment)
         md = d / "PROMPT.md"
         md.write_text(prompt, encoding="utf-8")
         os.chmod(md, 0o600)

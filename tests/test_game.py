@@ -229,6 +229,53 @@ def test_halfmove_draw():
     assert g.result == "draw" and g.result_reason == "halfmove_limit"
 
 
+def test_state_time_fields():
+    g = make_game(base_seconds=900, step_seconds=180, increment=10)
+    st = g.state_for("r")
+    assert st["step_elapsed"] is not None and 0 <= st["step_elapsed"] < 5
+    assert st["last_move"] is None
+    assert "本步已用" in st["time_status"] and "局时还剩" in st["time_status"]
+    assert "+10s" in st["time_status"]              # 加秒写进提示，让 Agent 知道走棋回血
+    pv = g.propose_move("r", "h2e2"); g.commit("r", pv["pending_id"])
+    st_b = g.state_for("b")
+    assert st_b["last_move"]["iccs"] == "h2e2" and st_b["last_move"]["color"] == "r"
+    assert st_b["last_move"]["elapsed"] >= 0
+    assert "对方上一步用时" in st_b["time_status"]  # 轮到黑方，参照系是红方耗时
+    st_r = g.state_for("r")
+    assert "对方思考中" in st_r["time_status"]      # 未轮到自己时不显示本步已用
+
+
+def test_time_status_before_start_and_finished():
+    g = Game("g1", "A", "B")
+    st = g.state_for("r")
+    assert st["step_elapsed"] is None
+    assert "计时未开始" in st["time_status"]
+    g.join("r"); g.join("b")
+    g.resign("r")
+    assert "对局已结束" in g.state_for("b")["time_status"]
+
+
+def test_time_status_urgency_step():
+    g = make_game(base_seconds=900, step_seconds=0.3)
+    time.sleep(0.26)                                # 超过 80% 步时
+    assert "立即" in g.state_for("r")["time_status"]
+
+
+def test_time_status_urgency_base():
+    g = make_game(base_seconds=300, step_seconds=180)   # 局时 ≤ 2×步时
+    assert "局时紧张" in g.state_for("r")["time_status"]
+    g2 = make_game(base_seconds=900, step_seconds=180)
+    assert "局时紧张" not in g2.state_for("r")["time_status"]
+
+
+def test_move_responses_carry_time_status():
+    g = make_game()
+    pv = g.propose_move("r", "h2e2")
+    assert "本步已用" in pv["time_status"]
+    entry = g.commit("r", pv["pending_id"])
+    assert "time_status" in entry
+
+
 def test_state_reports_in_check():
     g = make_game()
     st = g.state_for("r")

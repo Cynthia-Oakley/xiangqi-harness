@@ -148,8 +148,9 @@ def create_app(data_dir="data") -> FastAPI:
     @app.post("/api/games/{gid}/cancel")
     async def cancel(gid: str, body: PendingIn, x_seat_token: str | None = Header(None)):
         g = get_game(gid)
-        g.cancel(seat_color(g, x_seat_token), body.pending_id)
-        return {"ok": True}
+        color = seat_color(g, x_seat_token)
+        g.cancel(color, body.pending_id)
+        return {"ok": True, "time_status": g.time_status(color)}
 
     class NoteIn(BaseModel):
         text: str
@@ -162,7 +163,7 @@ def create_app(data_dir="data") -> FastAPI:
         n = g.notes[-1]
         persist_note(g, n)
         broadcast(gid, "note", n)   # 只去观战 SSE；Agent 无任何接口能读到
-        return {"ok": True}
+        return {"ok": True, "time_status": g.time_status(color)}
 
     @app.post("/api/games/{gid}/resign")
     async def resign(gid: str, x_seat_token: str | None = Header(None)):
@@ -174,8 +175,9 @@ def create_app(data_dir="data") -> FastAPI:
     @app.post("/api/games/{gid}/offer-draw")
     async def offer_draw(gid: str, x_seat_token: str | None = Header(None)):
         g = get_game(gid)
-        g.offer_draw(seat_color(g, x_seat_token))
-        return {"ok": True}
+        color = seat_color(g, x_seat_token)
+        g.offer_draw(color)
+        return {"ok": True, "time_status": g.time_status(color)}
 
     @app.post("/api/games/{gid}/accept-draw")
     async def accept_draw(gid: str, x_seat_token: str | None = Header(None)):

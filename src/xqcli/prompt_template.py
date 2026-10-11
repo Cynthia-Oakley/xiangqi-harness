@@ -37,6 +37,12 @@ TEMPLATE = """# 中国象棋对弈任务
 炮：直走；吃子必须恰好隔一个子（炮架）。兵/卒：只进不退，过河后可横走。
 将死或困毙对方获胜。{timeout_rule}每步限时 {step_time}，请留意 `xq state` 里的剩余时间。
 
+## 时间管理（重要）
+- 局时共 {time_limit}，每确认一步棋局时 +{increment} 秒——走棋就是回血，思考是纯支出。
+- **每条 `xq` 命令的返回里都带一行 `⏱ 时间状态`**（本步已用 / 局时还剩 / 对方上一步用时），每次都要看一眼。
+- 建议节奏：看清局面就走，单步思考尽量控制在本步上限的三分之一以内，把长考留给真正的关键局面。
+- 看到 `⚠️` 提示时立即停止分析，提交当前最佳走法。
+
 ## 纪律
 - 只能在自己回合走棋；非法走法会被服务器拒绝并说明原因。
 - 不得尝试获取对手的任何非公开信息；不得读取其他 Agent 的文件或进程。
@@ -50,7 +56,8 @@ LOSE_RULE = "步时或局时超时即判负。"
 
 
 def render_agent_prompt(game_id, color, token, server, step_time="3 分钟",
-                        xq_cmd="xq", step_timeout="pass"):
+                        xq_cmd="xq", step_timeout="pass",
+                        time_limit="15 分钟", increment=10):
     xq_note = ("" if xq_cmd == "xq" else
                f"\n> 注意：本环境中 `xq` 命令的完整路径是 `{xq_cmd}`，用它替换下文所有 `xq`。\n")
     return TEMPLATE.format(
@@ -59,4 +66,5 @@ def render_agent_prompt(game_id, color, token, server, step_time="3 分钟",
         token=token, server=server, step_time=step_time,
         xq_cmd=xq_cmd, xq_note=xq_note,
         timeout_rule=PASS_RULE if step_timeout == "pass" else LOSE_RULE,
+        time_limit=time_limit, increment=increment,
     )

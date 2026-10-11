@@ -45,10 +45,17 @@ def show(resp: httpx.Response):
     return resp.json()
 
 
+def echo_time(d: dict):
+    if d.get("time_status"):
+        typer.echo("⏱ " + d["time_status"])
+
+
 def print_state(st: dict):
     typer.echo(st["ascii"])
     typer.echo(f"FEN: {st['fen']}")
     typer.echo(f"轮到你: {st['your_turn']}  时钟: {st['clocks']}")
+    if st.get("time_status"):
+        typer.echo("⏱ " + st["time_status"])
     if st.get("in_check"):
         typer.echo("!! 将军：你正被将军，本步必须应将 !!")
     if st["result"]:
@@ -103,7 +110,8 @@ def new(red_name: str, black_name: str, server: str = DEFAULT_SERVER,
     seats.mkdir(exist_ok=True)
     for color, cn in (("r", "red"), ("b", "black")):
         p = render_agent_prompt(g["game_id"], color, g[f"{cn}_token"], server,
-                                step_time, step_timeout=step_timeout)
+                                step_time, step_timeout=step_timeout,
+                                time_limit=time_limit, increment=increment)
         md = seats / f"{g['game_id']}-{cn}.md"
         md.write_text(p, encoding="utf-8")
         os.chmod(md, 0o600)               # 提示词文件含座位令牌
@@ -158,6 +166,7 @@ def legal_moves_cmd():
     with client(seat) as c:
         st = show(c.get(f"/api/games/{seat['game_id']}/state"))
     typer.echo(" ".join(st.get("legal_moves", [])) or "（未轮到你或对局结束）")
+    echo_time(st)
 
 
 @app.command()
@@ -168,32 +177,36 @@ def move(iccs: str, note: str | None = None):
                          json={"move": iccs, "note": note}))
     typer.echo(json.dumps(pv, ensure_ascii=False, indent=2))
     typer.echo("核对无误后: xq commit " + pv["pending_id"])
+    echo_time(pv)
 
 
 @app.command()
 def commit(pending_id: str):
     seat = load_seat()
     with client(seat) as c:
-        typer.echo(json.dumps(show(c.post(
-            f"/api/games/{seat['game_id']}/commit",
-            json={"pending_id": pending_id})), ensure_ascii=False, indent=2))
+        resp = show(c.post(f"/api/games/{seat['game_id']}/commit",
+                           json={"pending_id": pending_id}))
+    typer.echo(json.dumps(resp, ensure_ascii=False, indent=2))
+    echo_time(resp)
 
 
 @app.command()
 def cancel(pending_id: str):
     seat = load_seat()
     with client(seat) as c:
-        show(c.post(f"/api/games/{seat['game_id']}/cancel",
-                    json={"pending_id": pending_id}))
+        resp = show(c.post(f"/api/games/{seat['game_id']}/cancel",
+                           json={"pending_id": pending_id}))
     typer.echo("已取消")
+    echo_time(resp)
 
 
 @app.command()
 def note(text: str):
     seat = load_seat()
     with client(seat) as c:
-        show(c.post(f"/api/games/{seat['game_id']}/note", json={"text": text}))
+        resp = show(c.post(f"/api/games/{seat['game_id']}/note", json={"text": text}))
     typer.echo("已记录（仅观众可见）")
+    echo_time(resp)
 
 
 @app.command()
@@ -218,8 +231,9 @@ def resign():
 def offer_draw():
     seat = load_seat()
     with client(seat) as c:
-        show(c.post(f"/api/games/{seat['game_id']}/offer-draw"))
+        resp = show(c.post(f"/api/games/{seat['game_id']}/offer-draw"))
     typer.echo("已提出和棋")
+    echo_time(resp)
 
 
 @app.command(name="accept-draw")

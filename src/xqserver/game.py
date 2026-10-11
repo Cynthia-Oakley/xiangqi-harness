@@ -26,6 +26,11 @@ class GameOver(RuleError):
     pass
 
 
+def _fmt_secs(x):
+    m, s = divmod(int(round(x)), 60)
+    return f"{m}m{s}s" if m else f"{s}s"
+
+
 class Game:
     def __init__(self, gid, red_name, black_name,
                  base_seconds=900, step_seconds=180, increment=10,
@@ -76,6 +81,30 @@ class Game:
         if not self.started:
             return 0.0
         return time.monotonic() - self.turn_started
+
+    def time_status(self, color):
+        """给 Agent 的人话时间状态：本步已用 + 局时剩余 + 对方耗时 + 紧迫度。"""
+        if self.result:
+            return "对局已结束。"
+        if not self.started:
+            return "等待双方入座，计时未开始。"
+        my_turn = self.board.turn == color
+        elapsed = self._elapsed()
+        rem = self.remaining[color] - (elapsed if my_turn else 0.0)
+        parts = []
+        if my_turn:
+            parts.append(f"本步已用 {_fmt_secs(elapsed)}（上限 {_fmt_secs(self.step_seconds)}）")
+        else:
+            parts.append("对方思考中")
+        parts.append(f"局时还剩 {_fmt_secs(max(0.0, rem))}（每步 +{_fmt_secs(self.increment)}）")
+        if self.history and self.history[-1]["color"] != color:
+            parts.append(f"对方上一步用时 {_fmt_secs(self.history[-1]['elapsed'])}")
+        msg = "｜".join(parts)
+        if my_turn and elapsed >= 0.8 * self.step_seconds:
+            msg += "　⚠️ 本步时间即将耗尽，立即提交当前最佳走法！"
+        elif rem <= 2 * self.step_seconds:
+            msg += "　⚠️ 局时紧张，请加快节奏。"
+        return msg
 
     def clocks(self):
         side = self.board.turn
@@ -187,6 +216,7 @@ class Game:
                 "fen_after": nb.to_fen(),
                 "opp_replies": len(legal_moves(nb, opp)),
                 "expires_in": round(expires_in, 1),
+                "time_status": self.time_status(color),
             }
 
     def commit(self, color, pending_id):
@@ -223,7 +253,7 @@ class Game:
                 res = game_result(self.board, self.draw_halfmoves)
                 if res:
                     self._finish(res, "halfmove_limit" if res == "draw" else "checkmate")
-            return entry
+            return entry | {"time_status": self.time_status(color)}
 
     def cancel(self, color, pending_id):
         with self.lock:
@@ -287,6 +317,11 @@ class Game:
                 "result": self.result,
                 "result_reason": self.result_reason,
                 "in_check": self.result is None and in_check(self.board, color),
+                "step_elapsed": (None if self.result or not self.started
+                                 else round(self._elapsed(), 1)),
+                "last_move": (None if not self.history else {
+                    k: self.history[-1][k] for k in ("color", "iccs", "chinese", "elapsed")}),
+                "time_status": self.time_status(color),
                 "clocks": self.clocks(),
                 "draw_offered": self.draw_offered_by is not None and self.draw_offered_by != color,
             }
