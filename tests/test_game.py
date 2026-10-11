@@ -229,6 +229,16 @@ def test_halfmove_draw():
     assert g.result == "draw" and g.result_reason == "halfmove_limit"
 
 
+def test_state_reports_in_check():
+    g = make_game()
+    st = g.state_for("r")
+    assert st["in_check"] is False       # 初始局面无人被将军
+    # 红车在 e0 直射黑将（e9）：黑方视角 in_check=True，红方视角 False
+    g.board = Board.from_fen("4k4/9/9/9/9/9/9/9/9/3KR4 b - - 0 1")
+    assert g.state_for("b")["in_check"] is True
+    assert g.state_for("r")["in_check"] is False
+
+
 def test_state_hides_notes():
     g = make_game()
     g.add_note("r", "秘密计划")

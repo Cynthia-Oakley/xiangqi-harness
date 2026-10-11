@@ -286,6 +286,7 @@ class Game:
                 "ply": len(self.history),
                 "result": self.result,
                 "result_reason": self.result_reason,
+                "in_check": self.result is None and in_check(self.board, color),
                 "clocks": self.clocks(),
                 "draw_offered": self.draw_offered_by is not None and self.draw_offered_by != color,
             }

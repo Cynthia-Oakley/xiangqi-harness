@@ -49,6 +49,8 @@ def print_state(st: dict):
     typer.echo(st["ascii"])
     typer.echo(f"FEN: {st['fen']}")
     typer.echo(f"轮到你: {st['your_turn']}  时钟: {st['clocks']}")
+    if st.get("in_check"):
+        typer.echo("!! 将军：你正被将军，本步必须应将 !!")
     if st["result"]:
         typer.echo(f"对局结束: {st['result']} ({st['result_reason']})")
 

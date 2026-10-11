@@ -20,7 +20,7 @@ TEMPLATE = """# 中国象棋对弈任务
 
 ## 对弈循环（严格遵守）
 1. `xq wait` —— 阻塞等待轮到你。输出里 `轮到你: True` 才轮到你。
-2. `xq state` —— 查看局面（ASCII 棋盘 + FEN + 剩余时间）。
+2. `xq state` —— 查看局面（ASCII 棋盘 + FEN + 剩余时间）。若提示「将军」（`in_check: true`），表示你正被将军，本步必须应将。
 3. 思考，并用 `xq note "你的思考"` 记录（只有观众能看到，对手看不到）。
 4. `xq move <走法>` —— 预览。仔细阅读返回的中文描述、是否吃子、走后 FEN。
 5. **核对预览是否符合你的预期**：符合 → `xq commit <pending_id>`；不符合 → `xq cancel <pending_id>` 后重新 `xq move`。
