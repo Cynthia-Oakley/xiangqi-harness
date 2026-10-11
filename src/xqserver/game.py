@@ -29,12 +29,15 @@ class GameOver(RuleError):
 class Game:
     def __init__(self, gid, red_name, black_name,
                  base_seconds=900, step_seconds=180, increment=10,
-                 draw_halfmoves=120):
+                 draw_halfmoves=120, step_timeout="pass"):
+        if step_timeout not in ("pass", "lose"):
+            raise ValueError(f"step_timeout 只能是 pass 或 lose: {step_timeout!r}")
         self.id = gid
         self.board = Board.initial()
         self.names = {RED: red_name, BLACK: black_name}
         self.tokens = {RED: secrets.token_urlsafe(16), BLACK: secrets.token_urlsafe(16)}
         self.step_seconds = float(step_seconds)
+        self.step_timeout = step_timeout
         self.increment = float(increment)
         self.draw_halfmoves = draw_halfmoves
         self.remaining = {RED: float(base_seconds), BLACK: float(base_seconds)}
@@ -47,6 +50,7 @@ class Game:
         self.notes = []              # {"ply","color","text","ts"}
         self.history = []            # {"ply","color","iccs","chinese","elapsed","fen"}
         self.draw_offered_by = None
+        self.events = []             # 待广播/落盘事件：{"event": "move"|"pass"|"result", "data": ...}
         self.lock = threading.RLock()
 
     # ---- 鉴权 ----
@@ -85,16 +89,61 @@ class Game:
         }
 
     def settle_timeout(self):
-        """非抛出版超时结算：任何查询入口都可调用，让对局不再因双方不操作而悬置。"""
+        """非抛出版超时结算：任何查询入口都可调用，让对局不再因双方不操作而悬置。
+        返回 True 表示局面或结果发生了变化（停着或终局），事件进入 self.events。"""
         with self.lock:
             if self.result or not self.started:
                 return False
             side = self.board.turn
-            if self._elapsed() > self.step_seconds or self.remaining[side] - self._elapsed() <= 0:
-                self.result = "black_win" if side == RED else "red_win"
-                self.result_reason = "timeout"
+            elapsed = self._elapsed()
+            if self.remaining[side] - elapsed <= 0:        # 局时耗尽：两种模式都判负
+                self._finish("black_win" if side == RED else "red_win", "timeout")
                 return True
-            return False
+            if elapsed <= self.step_seconds:
+                return False
+            if self.step_timeout == "lose" or in_check(self.board, side):
+                # 正式规则直接判负；被将军时不能停着，超时同样判负
+                self._finish("black_win" if side == RED else "red_win", "timeout")
+                return True
+            # 宽松模式：步时超时记「停着」一手，耗时照扣、不加秒
+            self.pending = None                            # 作废未确认的预览
+            self.remaining[side] -= elapsed
+            nb = self.board.copy()
+            nb.turn = BLACK if side == RED else RED
+            nb.halfmove += 1
+            if side == BLACK:
+                nb.fullmove += 1
+            self.board = nb
+            self.turn_started = time.monotonic()
+            self.draw_offered_by = None
+            entry = {
+                "ply": len(self.history) + 1,
+                "color": side,
+                "iccs": "pass",
+                "chinese": "停着",
+                "elapsed": round(elapsed, 2),
+                "fen": self.board.to_fen(),
+            }
+            self.history.append(entry)
+            self.events.append({"event": "pass",
+                                "data": entry | {"clocks": self.clocks()}})
+            res = game_result(self.board, self.draw_halfmoves)
+            if res:                                        # 停着也推进自然限着
+                self._finish(res, "halfmove_limit" if res == "draw" else "checkmate")
+            return True
+
+    def _finish(self, result, reason):
+        self.pending = None
+        self.result = result
+        self.result_reason = reason
+        self.events.append({"event": "result",
+                            "data": {"result": result, "reason": reason}})
+
+    def pop_events(self):
+        """取出并清空待广播事件（由服务层负责广播与落盘）。"""
+        with self.lock:
+            evs, self.events = self.events, []
+            return evs
 
     def _expire_if_timeout(self):
         """在走棋方操作入口结算超时；超时即判负并抛 GameOver。"""
@@ -166,14 +215,14 @@ class Game:
             self.draw_offered_by = None
             entry["fen"] = self.board.to_fen()
             self.history.append(entry)
+            self.events.append({"event": "move",
+                                "data": entry | {"clocks": self.clocks()}})
             if self.remaining[color] <= 0:
-                self.result = "black_win" if color == RED else "red_win"
-                self.result_reason = "timeout"
+                self._finish("black_win" if color == RED else "red_win", "timeout")
             else:
                 res = game_result(self.board, self.draw_halfmoves)
                 if res:
-                    self.result = res
-                    self.result_reason = "halfmove_limit" if res == "draw" else "checkmate"
+                    self._finish(res, "halfmove_limit" if res == "draw" else "checkmate")
             return entry
 
     def cancel(self, color, pending_id):
@@ -204,8 +253,7 @@ class Game:
         with self.lock:
             if self.result:
                 raise GameOver("对局已结束")
-            self.result = "black_win" if color == RED else "red_win"
-            self.result_reason = "resign"
+            self._finish("black_win" if color == RED else "red_win", "resign")
 
     def offer_draw(self, color):
         with self.lock:
@@ -218,8 +266,7 @@ class Game:
             if self.result:
                 raise GameOver("对局已结束")
             if self.draw_offered_by and self.draw_offered_by != color:
-                self.result = "draw"
-                self.result_reason = "draw_agreement"
+                self._finish("draw", "draw_agreement")
             else:
                 raise RuleError("没有可接受的和棋提议")
 

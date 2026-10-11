@@ -63,8 +63,10 @@ def serve(host: str = "127.0.0.1", port: int = 8000, data_dir: str = "data"):
 @app.command()
 def arena(red_name: str, black_name: str, port: int = 8000,
           base_dir: str = "arena", data_dir: str = "data",
-          time_limit: str = "15m", step_time: str = "3m", increment: int = 10):
-    """一条命令搭好一场 Agent 对局：自动拉起服务器、建对局、建目录、预入座。"""
+          time_limit: str = "15m", step_time: str = "3m", increment: int = 10,
+          step_timeout: str = "pass"):
+    """一条命令搭好一场 Agent 对局：自动拉起服务器、建对局、建目录、预入座。
+    --step-timeout pass=步时超时记停着一手（默认）；lose=超时即判负（正式规则）。"""
     import sys
     from xqcli.arena import ensure_server, setup_arena
     xq_cmd = str(Path(sys.argv[0]).resolve())
@@ -72,7 +74,7 @@ def arena(red_name: str, black_name: str, port: int = 8000,
     reused = ensure_server(server, xq_cmd, port, data_dir)
     typer.echo("裁判服务器：" + ("已在运行，直接复用" if reused else f"已后台拉起（日志 {data_dir}/serve.log）"))
     info = setup_arena(red_name, black_name, server, base_dir, xq_cmd,
-                       time_limit, step_time, increment)
+                       time_limit, step_time, increment, step_timeout)
     typer.echo(f"对局 {info['game_id']} 已创建，双方已预入座：")
     typer.echo(f"  红方({red_name}) 工作目录: {info['dirs']['red']}")
     typer.echo(f"  黑方({black_name}) 工作目录: {info['dirs']['black']}")
@@ -83,20 +85,23 @@ def arena(red_name: str, black_name: str, port: int = 8000,
 
 @app.command()
 def new(red_name: str, black_name: str, server: str = DEFAULT_SERVER,
-        time_limit: str = "15m", step_time: str = "3m", increment: int = 10):
+        time_limit: str = "15m", step_time: str = "3m", increment: int = 10,
+        step_timeout: str = "pass"):
     with bare_client(server) as c:
         r = c.post("/api/games", json={
             "red_name": red_name, "black_name": black_name,
             "base_seconds": parse_duration(time_limit),
             "step_seconds": parse_duration(step_time),
             "increment": increment,
+            "step_timeout": step_timeout,
         })
     g = show(r)
     from xqcli.prompt_template import render_agent_prompt
     seats = Path("seats")
     seats.mkdir(exist_ok=True)
     for color, cn in (("r", "red"), ("b", "black")):
-        p = render_agent_prompt(g["game_id"], color, g[f"{cn}_token"], server, step_time)
+        p = render_agent_prompt(g["game_id"], color, g[f"{cn}_token"], server,
+                                step_time, step_timeout=step_timeout)
         md = seats / f"{g['game_id']}-{cn}.md"
         md.write_text(p, encoding="utf-8")
         os.chmod(md, 0o600)               # 提示词文件含座位令牌

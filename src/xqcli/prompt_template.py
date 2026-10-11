@@ -35,7 +35,7 @@ TEMPLATE = """# 中国象棋对弈任务
 相/象：走田字，田心有子（塞象眼）不可走，不可过河。仕/士：九宫内斜走一格。
 帅/将：九宫内直走一格；两帅将不能在同一直线上照面（白脸将）。
 炮：直走；吃子必须恰好隔一个子（炮架）。兵/卒：只进不退，过河后可横走。
-将死或困毙对方获胜；超时判负。每步限时 {step_time}，请留意 `xq state` 里的剩余时间。
+将死或困毙对方获胜。{timeout_rule}每步限时 {step_time}，请留意 `xq state` 里的剩余时间。
 
 ## 纪律
 - 只能在自己回合走棋；非法走法会被服务器拒绝并说明原因。
@@ -44,8 +44,13 @@ TEMPLATE = """# 中国象棋对弈任务
 """
 
 
+PASS_RULE = ("步时超时会记「停着」一手：直接轮空给对方，耗时照扣局时且不加秒"
+             "（被将军时不能停着，超时仍判负）；局时耗尽判负。")
+LOSE_RULE = "步时或局时超时即判负。"
+
+
 def render_agent_prompt(game_id, color, token, server, step_time="3 分钟",
-                        xq_cmd="xq"):
+                        xq_cmd="xq", step_timeout="pass"):
     xq_note = ("" if xq_cmd == "xq" else
                f"\n> 注意：本环境中 `xq` 命令的完整路径是 `{xq_cmd}`，用它替换下文所有 `xq`。\n")
     return TEMPLATE.format(
@@ -53,4 +58,5 @@ def render_agent_prompt(game_id, color, token, server, step_time="3 分钟",
         game_id=game_id, color="red" if color == "r" else "black",
         token=token, server=server, step_time=step_time,
         xq_cmd=xq_cmd, xq_note=xq_note,
+        timeout_rule=PASS_RULE if step_timeout == "pass" else LOSE_RULE,
     )

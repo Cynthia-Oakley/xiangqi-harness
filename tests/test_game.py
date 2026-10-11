@@ -1,4 +1,7 @@
+import time
+
 import pytest
+from xiangqi.board import Board
 from xqserver.game import AuthError, Game, GameOver, RuleError, TurnError
 
 
@@ -126,10 +129,65 @@ def test_no_commit_without_pending():
 
 
 def test_step_timeout_loss():
-    g = make_game(step_seconds=0)        # 步时 0：下一步操作即超时
+    g = make_game(step_seconds=0, step_timeout="lose")  # 正式规则：步时 0，下一步操作即超时
     with pytest.raises(GameOver):
         g.propose_move("r", "h2e2")
     assert g.result == "black_win" and g.result_reason == "timeout"
+
+
+def test_pass_mode_step_timeout():
+    """宽松模式（默认）：步时超时记停着一手，轮转到对方，耗时照扣不加秒。"""
+    g = make_game(step_seconds=0.05)
+    assert g.step_timeout == "pass"
+    time.sleep(0.1)
+    assert g.settle_timeout() is True
+    assert g.result is None
+    assert g.board.turn == "b"
+    entry = g.history[-1]
+    assert entry["iccs"] == "pass" and entry["chinese"] == "停着"
+    assert entry["color"] == "r" and entry["ply"] == 1
+    assert g.remaining["r"] < 900                      # 耗时照扣
+    evs = g.pop_events()
+    assert evs[0]["event"] == "pass"
+    assert g.pop_events() == []                        # 事件取出即清空
+    pv = g.propose_move("b", "b9c7")                   # 黑方正常走棋
+    g.commit("b", pv["pending_id"])
+    assert g.board.turn == "r"
+
+
+def test_pass_mode_consecutive_passes():
+    g = make_game(step_seconds=0.05)
+    time.sleep(0.1); g.settle_timeout()                # 红停着
+    time.sleep(0.1); g.settle_timeout()                # 黑停着
+    assert [h["color"] for h in g.history] == ["r", "b"]
+    assert g.board.turn == "r" and g.result is None
+
+
+def test_pass_mode_check_still_loses():
+    """被将军时不能停着：超时仍判负。"""
+    g = make_game(step_seconds=0.05)
+    g.board = Board.from_fen("4k4/9/9/9/9/9/9/9/4r4/4K4 w - - 0 1")  # 黑车将着红帅
+    time.sleep(0.1)
+    g.settle_timeout()
+    assert g.result == "black_win" and g.result_reason == "timeout"
+
+
+def test_pass_mode_base_time_still_loses():
+    """局时耗尽不受宽松模式影响，仍判负。"""
+    g = make_game(base_seconds=0.1, step_seconds=0.05, increment=0)
+    time.sleep(0.2)
+    g.settle_timeout()
+    assert g.result == "black_win" and g.result_reason == "timeout"
+
+
+def test_pass_invalidates_pending_preview():
+    """超时停着后，该方此前未确认的预览作废。"""
+    g = make_game(step_seconds=0.2)
+    pv = g.propose_move("r", "h2e2")
+    time.sleep(0.3)
+    g.settle_timeout()                                 # 红停着，轮到黑
+    with pytest.raises(RuleError):
+        g.commit("r", pv["pending_id"])
 
 
 def test_base_time_exhaustion():

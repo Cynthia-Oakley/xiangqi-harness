@@ -274,7 +274,10 @@ es.addEventListener("snapshot", e => {
   $("moves-body").innerHTML = ""; $("notes-r").innerHTML = ""; $("notes-b").innerHTML = "";
   d.history.forEach(addMove);
   d.notes.forEach(addNote);
-  lastMove = d.history.length ? iccsToCells(d.history.at(-1).iccs) : null;
+  lastMove = null;
+  for (let i = d.history.length - 1; i >= 0; i--) {
+    if (d.history[i].iccs !== "pass") { lastMove = iccsToCells(d.history[i].iccs); break; }
+  }
   applyBoardState(d.fen);
   if (d.result) showResult(d.result, d.result_reason);
 });
@@ -288,7 +291,7 @@ es.addEventListener("start", e => {      // 双方入座，开赛
 
 es.addEventListener("move", e => {
   const m = JSON.parse(e.data);
-  lastMove = iccsToCells(m.iccs);
+  if (m.iccs !== "pass") lastMove = iccsToCells(m.iccs);   // 停着不改高亮
   if (m.clocks) state.clocks = { r: m.clocks.remaining.r, b: m.clocks.remaining.b };
   applyBoardState(m.fen);
   addMove(m);

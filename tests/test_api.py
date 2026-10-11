@@ -35,7 +35,7 @@ async def join_both(client, g):
 
 async def test_join_flow_and_start_gate(client):
     """双方 join 才开赛：开赛前不能走棋、超时也不判负。"""
-    g = await new_game(client, step_seconds=0.2)
+    g = await new_game(client, step_seconds=0.2, step_timeout="lose")
     gid = g["game_id"]
     r = await client.post(f"/api/games/{gid}/move", json={"move": "h2e2"},
                           headers={"X-Seat-Token": g["red_token"]})
@@ -184,6 +184,40 @@ async def test_game_not_found(client):
     assert r.status_code == 404
 
 
+async def test_pass_mode_via_api(client, tmp_path):
+    """默认宽松模式：步时超时记停着并轮转换边，落盘与状态一致。"""
+    g = await new_game(client, step_seconds=0.2, increment=0)
+    await join_both(client, g)
+    gid = g["game_id"]
+    await asyncio.sleep(0.4)
+    st = (await client.get(f"/api/games/{gid}/state",
+                           headers={"X-Seat-Token": g["red_token"]})).json()
+    assert st["result"] is None and st["turn"] == "b" and st["ply"] == 1
+    # 停着的一手已落盘
+    log = (tmp_path / "games" / f"{gid}.jsonl").read_text(encoding="utf-8")
+    assert "停着" in log
+    # 黑方照常走棋
+    r = await client.post(f"/api/games/{gid}/move", json={"move": "b9c7"},
+                          headers={"X-Seat-Token": g["black_token"]})
+    assert r.status_code == 200
+
+
+async def test_lose_mode_via_api(client):
+    """正式规则模式：步时超时即判负。"""
+    g = await new_game(client, step_seconds=0.2, increment=0, step_timeout="lose")
+    await join_both(client, g)
+    await asyncio.sleep(0.4)
+    st = (await client.get(f"/api/games/{g['game_id']}/state",
+                           headers={"X-Seat-Token": g["black_token"]})).json()
+    assert st["result"] == "black_win" and st["result_reason"] == "timeout"
+
+
+async def test_invalid_step_timeout_400(client):
+    r = await client.post("/api/games", json={
+        "red_name": "A", "black_name": "B", "step_timeout": "banana"})
+    assert r.status_code == 400
+
+
 async def test_watch_page_served(client):
     """观战页：无需鉴权，内嵌 EventSource 指向 spectate 流。"""
     g = await new_game(client)
@@ -212,7 +246,7 @@ async def test_state_settle_broadcasts_result(tmp_path):
         async with AsyncClient(base_url=f"http://127.0.0.1:{port}") as c:
             g = (await c.post("/api/games", json={
                 "red_name": "A", "black_name": "B",
-                "step_seconds": 0.2, "increment": 0})).json()
+                "step_seconds": 0.2, "increment": 0, "step_timeout": "lose"})).json()
             gid = g["game_id"]
             for t in (g["red_token"], g["black_token"]):
                 await c.post(f"/api/games/{gid}/join", headers={"X-Seat-Token": t})
@@ -259,7 +293,7 @@ async def test_notes_not_duplicated_in_jsonl(client, tmp_path):
 
 async def test_timeout_settled_on_state(client):
     """I2 回归：开赛后走棋方超时且不行动，对手查 state 也能拿到终局。"""
-    g = await new_game(client, step_seconds=0.2, increment=0)
+    g = await new_game(client, step_seconds=0.2, increment=0, step_timeout="lose")
     await join_both(client, g)
     await asyncio.sleep(0.4)
     st = await client.get(f"/api/games/{g['game_id']}/state",

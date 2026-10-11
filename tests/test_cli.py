@@ -11,6 +11,10 @@ def test_prompt_template_content():
     assert "蹩马腿" in p and "炮架" in p          # 规则速查
     assert "h2e2" in p                           # ICCS 示例
     assert "双方入座" in p                        # 计时从双方都 join 才开始
+    assert "停着" in p                            # 默认宽松模式的超时说明
+    p_lose = render_agent_prompt("g-1", "r", "tok123", "http://127.0.0.1:8000",
+                                 step_timeout="lose")
+    assert "停着" not in p_lose and "超时即判负" in p_lose
     p2 = render_agent_prompt("g-1", "b", "tok456", "http://127.0.0.1:8000")
     assert "黑方" in p2 and "tok456" in p2
 

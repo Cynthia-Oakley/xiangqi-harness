@@ -38,7 +38,7 @@ def ensure_server(server: str, xq_cmd: str, port: int,
 def setup_arena(red_name: str, black_name: str, server: str,
                 base_dir: str = "arena", xq_cmd: str = "xq",
                 time_limit: str = "15m", step_time: str = "3m",
-                increment: int = 10) -> dict:
+                increment: int = 10, step_timeout: str = "pass") -> dict:
     """创建对局 + 双方工作目录（PROMPT.md + 预入座 .xqseat.json）。"""
     from xqcli.main import parse_duration
     r = httpx.post(f"{server}/api/games", json={
@@ -46,6 +46,7 @@ def setup_arena(red_name: str, black_name: str, server: str,
         "base_seconds": parse_duration(time_limit),
         "step_seconds": parse_duration(step_time),
         "increment": increment,
+        "step_timeout": step_timeout,
     }, timeout=10)
     r.raise_for_status()
     g = r.json()
@@ -55,7 +56,7 @@ def setup_arena(red_name: str, black_name: str, server: str,
         d = Path(base_dir) / f"{gid}-{cn}"
         d.mkdir(parents=True, exist_ok=True)
         prompt = render_agent_prompt(gid, color, g[f"{cn}_token"], server,
-                                     xq_cmd=xq_cmd)
+                                     xq_cmd=xq_cmd, step_timeout=step_timeout)
         md = d / "PROMPT.md"
         md.write_text(prompt, encoding="utf-8")
         os.chmod(md, 0o600)

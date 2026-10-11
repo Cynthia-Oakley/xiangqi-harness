@@ -30,6 +30,15 @@ def create_app(data_dir="data") -> FastAPI:
         for q in subscribers.get(gid, []):
             q.put_nowait({"event": event, "data": payload})
 
+    def flush_events(g: Game):
+        """把对局内累积的事件落盘并广播（走子/停着以 move 事件发给观战页）。"""
+        for ev in g.pop_events():
+            if ev["event"] in ("move", "pass"):
+                store.append_record(g, {"type": "move", **ev["data"]})
+                broadcast(g.id, "move", ev["data"])
+            elif ev["event"] == "result":
+                broadcast(g.id, "result", ev["data"])
+
     def persist_note(g: Game, n: dict):
         store.append_record(g, {"type": "note", **n})
         notes_persisted[g.id] = notes_persisted.get(g.id, 0) + 1
@@ -72,14 +81,18 @@ def create_app(data_dir="data") -> FastAPI:
         step_seconds: float = 180
         increment: float = 10
         draw_halfmoves: int = 120
+        step_timeout: str = "pass"
 
     @app.post("/api/games")
     async def new_game(body: NewGame):
+        if body.step_timeout not in ("pass", "lose"):
+            raise HTTPException(400, "step_timeout 只能是 pass 或 lose")
         g = store.create(body.red_name, body.black_name,
                          base_seconds=body.base_seconds,
                          step_seconds=body.step_seconds,
                          increment=body.increment,
-                         draw_halfmoves=body.draw_halfmoves)
+                         draw_halfmoves=body.draw_halfmoves,
+                         step_timeout=body.step_timeout)
         return {"game_id": g.id, "red_token": g.tokens["r"],
                 "black_token": g.tokens["b"],
                 "watch_url": f"/api/games/{g.id}/spectate"}
@@ -99,10 +112,8 @@ def create_app(data_dir="data") -> FastAPI:
     async def state(gid: str, x_seat_token: str | None = Header(None)):
         g = get_game(gid)
         color = seat_color(g, x_seat_token)
-        prev = g.result
         st = g.state_for(color)
-        if g.result and not prev:      # 查询结算出的终局也要推给观战者
-            broadcast(gid, "result", {"result": g.result, "reason": g.result_reason})
+        flush_events(g)                # 查询结算出的停着/终局也推给观战者
         if st["your_turn"]:
             st["legal_moves"] = legal_moves(g.board, color)
         return st
@@ -114,7 +125,10 @@ def create_app(data_dir="data") -> FastAPI:
     @app.post("/api/games/{gid}/move")
     async def move(gid: str, body: MoveIn, x_seat_token: str | None = Header(None)):
         g = get_game(gid)
-        return g.propose_move(seat_color(g, x_seat_token), body.move, body.note)
+        try:
+            return g.propose_move(seat_color(g, x_seat_token), body.move, body.note)
+        finally:
+            flush_events(g)
 
     class PendingIn(BaseModel):
         pending_id: str
@@ -122,14 +136,13 @@ def create_app(data_dir="data") -> FastAPI:
     @app.post("/api/games/{gid}/commit")
     async def commit(gid: str, body: PendingIn, x_seat_token: str | None = Header(None)):
         g = get_game(gid)
-        entry = g.commit(seat_color(g, x_seat_token), body.pending_id)
-        store.append_record(g, {"type": "move", **entry})
+        try:
+            entry = g.commit(seat_color(g, x_seat_token), body.pending_id)
+        finally:
+            flush_events(g)
         done = notes_persisted.get(gid, 0)
         for n in g.notes[done:]:         # 只落盘尚未持久化的 note（含 move 附带的）
             persist_note(g, n)
-        broadcast(gid, "move", entry | {"clocks": g.clocks()})
-        if g.result:
-            broadcast(gid, "result", {"result": g.result, "reason": g.result_reason})
         return entry | {"result": g.result, "result_reason": g.result_reason}
 
     @app.post("/api/games/{gid}/cancel")
@@ -155,7 +168,7 @@ def create_app(data_dir="data") -> FastAPI:
     async def resign(gid: str, x_seat_token: str | None = Header(None)):
         g = get_game(gid)
         g.resign(seat_color(g, x_seat_token))
-        broadcast(gid, "result", {"result": g.result, "reason": g.result_reason})
+        flush_events(g)
         return {"result": g.result}
 
     @app.post("/api/games/{gid}/offer-draw")
@@ -168,7 +181,7 @@ def create_app(data_dir="data") -> FastAPI:
     async def accept_draw(gid: str, x_seat_token: str | None = Header(None)):
         g = get_game(gid)
         g.accept_draw(seat_color(g, x_seat_token))
-        broadcast(gid, "result", {"result": g.result, "reason": g.result_reason})
+        flush_events(g)
         return {"result": g.result}
 
     @app.get("/api/games/{gid}/wait")
@@ -176,9 +189,8 @@ def create_app(data_dir="data") -> FastAPI:
         g = get_game(gid)
         color = seat_color(g, x_seat_token)
         for _ in range(300):        # 最长 30s
-            if g.settle_timeout():   # 轮询中发现超时：广播终局后退出
-                broadcast(gid, "result", {"result": g.result, "reason": g.result_reason})
-                break
+            g.settle_timeout()       # 轮询中结算超时（停着或终局）并广播
+            flush_events(g)
             if g.result or len(g.history) > ply:
                 break
             await asyncio.sleep(0.1)
