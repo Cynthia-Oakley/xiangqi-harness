@@ -7,7 +7,7 @@ import time
 from xiangqi.board import Board, RED, BLACK, iccs_to_rc
 from xiangqi.notation import to_chinese
 from xiangqi.rules import apply_move, explain_illegal, game_result, in_check, legal_moves
-from xiangqi.textboard import render_ascii
+from xiangqi.textboard import piece_listing, render_ascii
 
 
 class AuthError(Exception):
@@ -226,6 +226,8 @@ class Game:
                 "fen_after": nb.to_fen(),
                 "opp_replies": len(legal_moves(nb, opp)),
                 "expires_in": round(expires_in, 1),
+                "ascii": render_ascii(nb, perspective=color),
+                "pieces": piece_listing(nb),
                 "time_status": self.time_status(color),
             }
 
@@ -269,7 +271,9 @@ class Game:
                 raise RuleError("预览已过期，请重新 move")
             self._expire_if_timeout()
             entry = self._settle_commit()
-            return entry | {"time_status": self.time_status(color)}
+            return entry | {"time_status": self.time_status(color),
+                            "ascii": render_ascii(self.board, perspective=color),
+                            "pieces": piece_listing(self.board)}
 
     def play(self, color, iccs, expect=None, note=None):
         """原子走子：校验 + 可选 expect 核对后直接提交，不经过挂单。"""
@@ -294,7 +298,9 @@ class Game:
                 "expires": time.monotonic() + 60.0,
             }
             entry = self._settle_commit()
-            return entry | {"time_status": self.time_status(color)}
+            return entry | {"time_status": self.time_status(color),
+                            "ascii": render_ascii(self.board, perspective=color),
+                            "pieces": piece_listing(self.board)}
 
     def cancel(self, color, pending_id):
         with self.lock:
@@ -377,6 +383,7 @@ class Game:
                 "your_turn": self.started and self.board.turn == color and self.result is None,
                 "fen": self.board.to_fen(),
                 "ascii": render_ascii(self.board, perspective=color),
+                "pieces": piece_listing(self.board),
                 "ply": len(self.history),
                 "result": self.result,
                 "result_reason": self.result_reason,

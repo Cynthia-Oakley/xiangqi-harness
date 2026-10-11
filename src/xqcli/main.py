@@ -52,7 +52,8 @@ def echo_time(d: dict):
 
 def print_state(st: dict):
     typer.echo(st["ascii"])
-    typer.echo(f"FEN: {st['fen']}")
+    if st.get("pieces"):
+        typer.echo(st["pieces"])
     typer.echo(f"轮到你: {st['your_turn']}  时钟: {st['clocks']}")
     if st.get("time_status"):
         typer.echo("⏱ " + st["time_status"])
@@ -64,6 +65,16 @@ def print_state(st: dict):
         typer.echo("!! 将军：你正被将军，本步必须应将 !!")
     if st["result"]:
         typer.echo(f"对局结束: {st['result']} ({st['result_reason']})")
+    typer.echo(f"FEN: {st['fen']}")
+
+
+def print_board_after(d: dict, headline: str):
+    """move/play/commit 返回后的增强视图：棋盘 + 棋子清单 + 一行结论。"""
+    if d.get("ascii"):
+        typer.echo(d["ascii"])
+    if d.get("pieces"):
+        typer.echo(d["pieces"])
+    typer.echo(headline)
 
 
 @app.command()
@@ -241,20 +252,39 @@ def board_image(out: str = "board.png"):
                "用你 harness 的看图能力打开它核对局面。")
 
 
+@app.command(name="history")
+def history_cmd(json_out: bool = typer.Option(False, "--json")):
+    """log 的别名：整局着法记录（ICCS + 中文 + 用时）。"""
+    log(json_out=json_out)
+
+
 @app.command()
-def move(iccs: str, note: str | None = None):
+def move(iccs: str, note: str | None = None,
+         json_out: bool = typer.Option(False, "--json")):
     seat = load_seat()
     with client(seat) as c:
         pv = show(c.post(f"/api/games/{seat['game_id']}/move",
                          json={"move": iccs, "note": note}))
-    typer.echo(json.dumps(pv, ensure_ascii=False, indent=2))
-    typer.echo("核对无误后: xq commit " + pv["pending_id"])
+    if json_out:
+        typer.echo(json.dumps(pv, ensure_ascii=False))
+        return
+    extra = []
+    if pv.get("captured"):
+        extra.append(f"吃 {pv['captured']}")
+    if pv.get("gives_check"):
+        extra.append("将军")
+    print_board_after(pv, f"预览（未落子）: {pv['chinese']} ({pv['move']})"
+                          + ("　" + "，".join(extra) if extra else "")
+                          + f"　挂单 {pv['pending_id']}，{int(pv['expires_in'])}s 内有效")
+    typer.echo(f"核对无误后: xq commit {pv['pending_id']}；反悔: xq cancel {pv['pending_id']}")
     echo_time(pv)
+    typer.echo(f"FEN: {pv['fen_after']}")
 
 
 @app.command()
 def play(iccs: str, expect: str | None = typer.Option(None, "--expect"),
-         note: str | None = typer.Option(None, "--note")):
+         note: str | None = typer.Option(None, "--note"),
+         json_out: bool = typer.Option(False, "--json")):
     """原子走子：--expect 先填你自己推出的中文着法，服务器核对一致才真正落子。"""
     seat = load_seat()
     with client(seat) as c:
@@ -268,18 +298,31 @@ def play(iccs: str, expect: str | None = typer.Option(None, "--expect"),
         typer.echo(f"错误({resp.status_code}): {body.get('error', resp.text)}", err=True)
         raise typer.Exit(1)
     d = resp.json()
-    typer.echo(json.dumps(d, ensure_ascii=False, indent=2))
+    if json_out:
+        typer.echo(json.dumps(d, ensure_ascii=False))
+        return
+    print_board_after(d, f"✔ 已落子: {d['chinese']} ({d['iccs']}) 用时 {int(d['elapsed'])}s")
+    if d.get("result"):
+        typer.echo(f"对局结束: {d['result']} ({d.get('result_reason')})")
     echo_time(d)
+    typer.echo(f"FEN: {d['fen']}")
 
 
 @app.command()
-def commit(pending_id: str):
+def commit(pending_id: str, json_out: bool = typer.Option(False, "--json")):
     seat = load_seat()
     with client(seat) as c:
         resp = show(c.post(f"/api/games/{seat['game_id']}/commit",
                            json={"pending_id": pending_id}))
-    typer.echo(json.dumps(resp, ensure_ascii=False, indent=2))
+    if json_out:
+        typer.echo(json.dumps(resp, ensure_ascii=False))
+        return
+    print_board_after(resp, f"✔ 已落子: {resp['chinese']} ({resp['iccs']}) "
+                            f"用时 {int(resp['elapsed'])}s")
+    if resp.get("result"):
+        typer.echo(f"对局结束: {resp['result']} ({resp.get('result_reason')})")
     echo_time(resp)
+    typer.echo(f"FEN: {resp['fen']}")
 
 
 @app.command()
