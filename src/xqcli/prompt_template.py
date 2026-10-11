@@ -30,6 +30,10 @@ TEMPLATE = """# 中国象棋对弈任务
 4 个字符：起点列+起点行+终点列+终点行。列 a-i（红方视角从左到右），行 0-9（0 是红方底线，9 是黑方底线）。
 例：红方开局 `h2e2` 就是"炮二平五"。拿不准时先运行 `xq legal-moves` 查看当前全部合法走法。
 
+## 可选：棋盘截图
+如果你的模型支持看图，运行 `xq board-image` 会把当前棋盘保存为 PNG（按你的视角渲染，
+约 240 tokens），打开它校准你对局面的空间理解；不支持看图就忽略此命令，文字棋盘已足够。
+
 ## 预览与挂单
 `xq move` 只是预览：**不会落子，也不会改变对手看到的局面**。预览会生成一个挂单，
 有效期 = min(60s, 本步剩余时间)，过期自动作废，需要重新 `xq move`；
@@ -65,7 +69,7 @@ LOSE_RULE = "步时或局时超时即判负。"
 
 def render_agent_prompt(game_id, color, token, server, step_time="3 分钟",
                         xq_cmd="xq", step_timeout="pass",
-                        time_limit="15 分钟", increment=10):
+                        time_limit="15 分钟", increment=20):
     xq_note = ("" if xq_cmd == "xq" else
                f"\n> 注意：本环境中 `xq` 命令的完整路径是 `{xq_cmd}`，用它替换下文所有 `xq`。\n")
     return TEMPLATE.format(

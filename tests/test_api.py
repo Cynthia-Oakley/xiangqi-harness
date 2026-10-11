@@ -401,3 +401,21 @@ async def test_play_page_route(client):
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
     assert "人机对弈" in r.text
+
+
+async def test_board_png_endpoint(client):
+    """棋盘截图：PNG 格式、按座位视角渲染（黑方翻转）、令牌错误 403。"""
+    g = await new_game(client)
+    gid = g["game_id"]
+    r = await client.get(f"/api/games/{gid}/board.png")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
+    red = await client.get(f"/api/games/{gid}/board.png",
+                           headers={"X-Seat-Token": g["red_token"]})
+    black = await client.get(f"/api/games/{gid}/board.png",
+                             params={"token": g["black_token"]})
+    assert red.status_code == black.status_code == 200
+    assert red.content != black.content                # 黑方视角已翻转
+    bad = await client.get(f"/api/games/{gid}/board.png", params={"token": "wrong"})
+    assert bad.status_code == 403

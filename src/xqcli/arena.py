@@ -38,7 +38,7 @@ def ensure_server(server: str, xq_cmd: str, port: int,
 def setup_arena(red_name: str, black_name: str, server: str,
                 base_dir: str = "arena", xq_cmd: str = "xq",
                 time_limit: str = "15m", step_time: str = "3m",
-                increment: int = 10, step_timeout: str = "pass",
+                increment: int = 20, step_timeout: str = "pass",
                 human: str | None = None) -> dict:
     """创建对局 + 工作目录（PROMPT.md + 预入座 .xqseat.json）。
 

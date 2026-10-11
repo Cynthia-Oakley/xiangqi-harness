@@ -76,7 +76,7 @@ def serve(host: str = "127.0.0.1", port: int = 8000, data_dir: str = "data"):
 @app.command()
 def arena(red_name: str, black_name: str, port: int = 8000,
           base_dir: str = "arena", data_dir: str = "data",
-          time_limit: str = "15m", step_time: str = "3m", increment: int = 10,
+          time_limit: str = "15m", step_time: str = "3m", increment: int = 20,
           step_timeout: str = "pass",
           human: str = typer.Option(None, "--human",
                                     help="人类座位: red 或 black；该方在浏览器对弈，不建 Agent 目录")):
@@ -113,7 +113,7 @@ def arena(red_name: str, black_name: str, port: int = 8000,
 
 @app.command()
 def new(red_name: str, black_name: str, server: str = DEFAULT_SERVER,
-        time_limit: str = "15m", step_time: str = "3m", increment: int = 10,
+        time_limit: str = "15m", step_time: str = "3m", increment: int = 20,
         step_timeout: str = "pass"):
     with bare_client(server) as c:
         r = c.post("/api/games", json={
@@ -220,6 +220,25 @@ def log(json_out: bool = typer.Option(False, "--json")):
         who = "红" if m["color"] == "r" else "黑"
         typer.echo(f"{m['ply']}. {who} {m['chinese']} ({m['iccs']}) {int(m['elapsed'])}s")
     echo_time(d)
+
+
+@app.command(name="board-image")
+def board_image(out: str = "board.png"):
+    """可选：把当前棋盘保存为 PNG 截图，支持看图的模型可用它校准局面。"""
+    seat = load_seat()
+    with client(seat) as c:
+        r = c.get(f"/api/games/{seat['game_id']}/board.png")
+    if r.status_code >= 400:
+        try:
+            msg = r.json().get("error", r.text)
+        except Exception:
+            msg = r.text
+        typer.echo(f"错误({r.status_code}): {msg}", err=True)
+        raise typer.Exit(1)
+    Path(out).write_bytes(r.content)
+    typer.echo(f"已保存 {out}（400x444 PNG，{len(r.content) / 1024:.0f}KB，"
+               f"视觉预算约 240 tokens；按你的视角渲染）。"
+               "用你 harness 的看图能力打开它核对局面。")
 
 
 @app.command()

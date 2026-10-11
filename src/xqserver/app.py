@@ -4,11 +4,12 @@ import asyncio
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from xiangqi.rules import legal_moves
+from xqserver.board_image import render_board_png
 from xqserver.game import AuthError, ExpectMismatch, Game, GameOver, RuleError, TurnError
 from xqserver.store import Store
 
@@ -83,7 +84,7 @@ def create_app(data_dir="data") -> FastAPI:
         black_name: str
         base_seconds: float = 900
         step_seconds: float = 180
-        increment: float = 10
+        increment: float = 20
         draw_halfmoves: int = 120
         step_timeout: str = "pass"
 
@@ -121,6 +122,19 @@ def create_app(data_dir="data") -> FastAPI:
         if st["your_turn"]:
             st["legal_moves"] = legal_moves(g.board, color)
         return st
+
+    @app.get("/api/games/{gid}/board.png")
+    async def board_png(gid: str, token: str | None = None,
+                        x_seat_token: str | None = Header(None)):
+        """当前棋盘 PNG（400x444，约 240 tokens）。带座位令牌时按该方视角（黑方翻转）。"""
+        g = get_game(gid)
+        tok = token or x_seat_token
+        perspective = seat_color(g, tok) if tok else "r"
+        last = (g.history[-1]["iccs"]
+                if g.history and g.history[-1]["iccs"] != "pass" else None)
+        return Response(render_board_png(g.board, perspective, last),
+                        media_type="image/png",
+                        headers={"Cache-Control": "no-store"})
 
     @app.get("/api/games/{gid}/log")
     async def game_log(gid: str, x_seat_token: str | None = Header(None)):
