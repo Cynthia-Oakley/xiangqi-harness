@@ -77,21 +77,36 @@ def serve(host: str = "127.0.0.1", port: int = 8000, data_dir: str = "data"):
 def arena(red_name: str, black_name: str, port: int = 8000,
           base_dir: str = "arena", data_dir: str = "data",
           time_limit: str = "15m", step_time: str = "3m", increment: int = 10,
-          step_timeout: str = "pass"):
+          step_timeout: str = "pass",
+          human: str = typer.Option(None, "--human",
+                                    help="人类座位: red 或 black；该方在浏览器对弈，不建 Agent 目录")):
     """一条命令搭好一场 Agent 对局：自动拉起服务器、建对局、建目录、预入座。
-    --step-timeout pass=步时超时记停着一手（默认）；lose=超时即判负（正式规则）。"""
+    --step-timeout pass=步时超时记停着一手（默认）；lose=超时即判负（正式规则）。
+    --human red/black=该方由人类在浏览器 /play 页面入座对弈。"""
     import sys
     from xqcli.arena import ensure_server, setup_arena
+    if human is not None:
+        human = human.lower()
+        if human not in ("red", "black"):
+            typer.echo(f"--human 只能是 red 或 black: {human!r}", err=True)
+            raise typer.Exit(1)
     xq_cmd = str(Path(sys.argv[0]).resolve())
     server = f"http://127.0.0.1:{port}"
     reused = ensure_server(server, xq_cmd, port, data_dir)
     typer.echo("裁判服务器：" + ("已在运行，直接复用" if reused else f"已后台拉起（日志 {data_dir}/serve.log）"))
     info = setup_arena(red_name, black_name, server, base_dir, xq_cmd,
-                       time_limit, step_time, increment, step_timeout)
+                       time_limit, step_time, increment, step_timeout,
+                       human=human)
     typer.echo(f"对局 {info['game_id']} 已创建，双方已预入座：")
-    typer.echo(f"  红方({red_name}) 工作目录: {info['dirs']['red']}")
-    typer.echo(f"  黑方({black_name}) 工作目录: {info['dirs']['black']}")
-    typer.echo("把各目录里的 PROMPT.md 喂给对应 harness（工作目录设为该目录）即可开赛。")
+    for cn, name in (("red", red_name), ("black", black_name)):
+        if info["dirs"].get(cn):
+            typer.echo(f"  {cn}方({name}) 工作目录: {info['dirs'][cn]}")
+        else:
+            typer.echo(f"  {cn}方({name}) 浏览器打开: {info['play_url']}")
+    if human:
+        typer.echo("你入座（打开链接）且对方 Agent join 后计时开始。")
+    else:
+        typer.echo("把各目录里的 PROMPT.md 喂给对应 harness（工作目录设为该目录）即可开赛。")
     typer.echo(f"浏览器观战: {server}/watch/{info['game_id']}")
     typer.echo(f"文本观战: curl -N {info['spectate']}")
 

@@ -381,3 +381,23 @@ async def test_moves_endpoint(client):
     # 未鉴权 403
     r3 = await client.get(f"/api/games/{gid}/moves")
     assert r3.status_code == 403
+
+
+async def test_state_contains_names(client):
+    """人机对弈页需要显示双方名字：state 必须带 names 字段。"""
+    g = await new_game(client)
+    st = (await client.get(f"/api/games/{g['game_id']}/state",
+                           headers={"X-Seat-Token": g["red_token"]})).json()
+    assert st["names"] == {"r": "Kimi", "b": "Claude"}
+    st2 = (await client.get(f"/api/games/{g['game_id']}/state",
+                            headers={"X-Seat-Token": g["black_token"]})).json()
+    assert st2["names"] == {"r": "Kimi", "b": "Claude"}
+
+
+async def test_play_page_route(client):
+    """GET /play/{gid} 返回人机对弈静态页。"""
+    g = await new_game(client)
+    r = await client.get(f"/play/{g['game_id']}")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "人机对弈" in r.text

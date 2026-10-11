@@ -265,6 +265,11 @@ def create_app(data_dir="data") -> FastAPI:
         return FileResponse(Path(__file__).parent / "static" / "watch.html",
                             media_type="text/html")
 
+    @app.get("/play/{gid}")
+    async def play_page(gid: str):
+        return FileResponse(Path(__file__).parent / "static" / "play.html",
+                            media_type="text/html")
+
     @app.get("/api/rules")
     async def rules():
         return {"rules": RULES_TEXT}

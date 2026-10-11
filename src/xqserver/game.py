@@ -370,6 +370,7 @@ class Game:
             return {
                 "game_id": self.id,
                 "your_color": color,
+                "names": dict(self.names),
                 "turn": self.board.turn,
                 "started": self.started,
                 "joined": dict(self.joined),

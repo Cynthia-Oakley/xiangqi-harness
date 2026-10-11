@@ -38,8 +38,14 @@ def ensure_server(server: str, xq_cmd: str, port: int,
 def setup_arena(red_name: str, black_name: str, server: str,
                 base_dir: str = "arena", xq_cmd: str = "xq",
                 time_limit: str = "15m", step_time: str = "3m",
-                increment: int = 10, step_timeout: str = "pass") -> dict:
-    """创建对局 + 双方工作目录（PROMPT.md + 预入座 .xqseat.json）。"""
+                increment: int = 10, step_timeout: str = "pass",
+                human: str | None = None) -> dict:
+    """创建对局 + 工作目录（PROMPT.md + 预入座 .xqseat.json）。
+
+    human="red"/"black" 时该方是人类玩家：不建目录，改返回 play_url 浏览器入座链接。
+    """
+    if human not in (None, "red", "black"):
+        raise ValueError(f"human 只能是 red/black/None: {human!r}")
     from xqcli.main import parse_duration
     r = httpx.post(f"{server}/api/games", json={
         "red_name": red_name, "black_name": black_name,
@@ -53,6 +59,8 @@ def setup_arena(red_name: str, black_name: str, server: str,
     gid = g["game_id"]
     dirs = {}
     for color, cn in (("r", "red"), ("b", "black")):
+        if cn == human:                # 人类座位：浏览器打开 play_url 入座，无需目录
+            continue
         d = Path(base_dir) / f"{gid}-{cn}"
         d.mkdir(parents=True, exist_ok=True)
         prompt = render_agent_prompt(gid, color, g[f"{cn}_token"], server,
@@ -68,4 +76,9 @@ def setup_arena(red_name: str, black_name: str, server: str,
         sf.write_text(json.dumps(seat, ensure_ascii=False, indent=2))
         os.chmod(sf, 0o600)
         dirs[cn] = str(d)
-    return {"game_id": gid, "dirs": dirs, "spectate": f"{server}/api/games/{gid}/spectate"}
+    out = {"game_id": gid, "dirs": dirs,
+           "spectate": f"{server}/api/games/{gid}/spectate"}
+    if human:
+        out["human"] = human
+        out["play_url"] = f"{server}/play/{gid}?token={g[f'{human}_token']}"
+    return out
