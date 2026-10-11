@@ -78,10 +78,23 @@ def print_board_after(d: dict, headline: str):
 
 
 @app.command()
-def serve(host: str = "127.0.0.1", port: int = 8000, data_dir: str = "data"):
+def serve(host: str = "127.0.0.1", port: int = 8000, data_dir: str = "data",
+          idle_minutes: int = 60):
+    """启动裁判服务器。--idle-minutes：无活动多少分钟后自动关机（0=不自动关机）。"""
+    try:    # 单实例防护：端口上已有健康的裁判服务器则直接复用，不再起重复进程
+        httpx.get(f"http://{host}:{port}/api/rules", timeout=1,
+                  trust_env=False).raise_for_status()
+        typer.echo(f"裁判服务器已在 {host}:{port} 运行，无需重复启动。")
+        raise typer.Exit(0)
+    except httpx.HTTPError:
+        pass
     import uvicorn
     from xqserver.app import create_app
-    uvicorn.run(create_app(data_dir), host=host, port=port)
+    app = create_app(data_dir, idle_minutes=idle_minutes)
+    key = (Path(data_dir) / "admin_key.txt").read_text().strip()
+    typer.echo(f"控制台: http://{host}:{port}/admin?key={key}"
+               "（收藏此地址——可查看/终止对局、停止服务器，无需命令行）")
+    uvicorn.run(app, host=host, port=port)
 
 
 @app.command()
@@ -120,6 +133,10 @@ def arena(red_name: str, black_name: str, port: int = 8000,
         typer.echo("把各目录里的 PROMPT.md 喂给对应 harness（工作目录设为该目录）即可开赛。")
     typer.echo(f"浏览器观战: {server}/watch/{info['game_id']}")
     typer.echo(f"文本观战: curl -N {info['spectate']}")
+    key_file = Path(data_dir) / "admin_key.txt"
+    if key_file.exists():
+        typer.echo(f"控制台: {server}/admin?key={key_file.read_text().strip()}"
+                   "（网页上即可终止对局/停止服务器）")
 
 
 @app.command()

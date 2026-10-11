@@ -200,7 +200,8 @@ const state = { names: { r: "红", b: "黑" }, clocks: { r: 0, b: 0 }, turn: "r"
                 result: null, started: false };
 const $ = id => document.getElementById(id);
 const REASON = { checkmate: "将死", timeout: "超时判负", resign: "认输",
-                 draw_agreement: "协议和棋", halfmove_limit: "自然限着" };
+                 draw_agreement: "协议和棋", halfmove_limit: "自然限着",
+                 aborted: "裁判终止" };
 function iccsToCells(iccs) {
   const col = ch => "abcdefghi".indexOf(ch);
   return [col(iccs[0]), 9 - +iccs[1], col(iccs[2]), 9 - +iccs[3]];

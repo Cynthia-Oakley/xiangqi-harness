@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>控制台 · Xiangqi Arena</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #f5ecd7; color: #3d2b1f; font-family: "Songti SC", "STSong", serif;
+         min-height: 100vh; padding: 24px 16px; }
+  h1 { text-align: center; font-size: 26px; letter-spacing: 12px; margin-bottom: 4px; }
+  .sub { text-align: center; color: #8a6d4f; font-size: 13px; margin-bottom: 24px; }
+  .wrap { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  .card { background: #fffdf6; border: 1px solid #d8c39a; border-radius: 10px;
+          padding: 16px 20px; box-shadow: 0 1px 4px rgba(90,60,20,.08); }
+  .card h2 { font-size: 16px; color: #8a6d4f; font-weight: normal; margin-bottom: 10px;
+             letter-spacing: 4px; }
+  .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 15px; }
+  .row b { font-weight: normal; color: #6b4f35; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+         background: #2e7d32; margin-right: 6px; }
+  .dot.dead { background: #b03028; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #e8d9b8; }
+  th { color: #8a6d4f; font-weight: normal; }
+  .gid { font-family: ui-monospace, monospace; font-size: 12px; color: #6b4f35; }
+  button { font-family: inherit; font-size: 14px; border-radius: 6px; cursor: pointer;
+           padding: 5px 14px; border: 1px solid #b03028; background: #fff; color: #b03028; }
+  button:hover { background: #fdf0ee; }
+  button.solid { background: #b03028; color: #fff; }
+  button.solid:hover { background: #96231d; }
+  button.link { border: none; color: #2a5d8a; padding: 2px 4px; background: none; }
+  .danger-zone { border-color: #b03028; }
+  .empty { color: #a08b70; font-size: 14px; padding: 8px 0; }
+  .stopped { text-align: center; color: #b03028; font-size: 18px; padding: 40px 0; }
+  .err { color: #b03028; font-size: 14px; text-align: center; padding: 12px; }
+</style>
+</head>
+<body>
+<h1>控 制 台</h1>
+<p class="sub">Xiangqi Arena 裁判服务器管理</p>
+<div class="wrap" id="wrap" style="display:none">
+  <div class="card">
+    <h2>服务器</h2>
+    <div class="row"><b>状态</b><span><span class="dot" id="dot"></span><span id="status">运行中</span></span></div>
+    <div class="row"><b>进程 PID</b><span id="pid">-</span></div>
+    <div class="row"><b>已运行</b><span id="uptime">-</span></div>
+    <div class="row"><b>空闲自动关机</b><span id="idle">-</span></div>
+  </div>
+  <div class="card">
+    <h2>对局</h2>
+    <table id="games" style="display:none">
+      <thead><tr><th>对局</th><th>红方 vs 黑方</th><th>状态</th><th>步数</th><th>操作</th></tr></thead>
+      <tbody id="games-body"></tbody>
+    </table>
+    <p class="empty" id="games-empty">当前没有对局。用 xq arena 开一局吧。</p>
+  </div>
+  <div class="card danger-zone">
+    <h2>危险操作</h2>
+    <div class="row">
+      <b>停止裁判服务器（进行中的对局会丢失）</b>
+      <button class="solid" id="btn-shutdown">停止服务器</button>
+    </div>
+  </div>
+</div>
+<p class="err" id="err" style="display:none"></p>
+<p class="stopped" id="stopped" style="display:none">服务器已停止。此页面可以关闭了。</p>
+<script>
+const $ = id => document.getElementById(id);
+let key = new URLSearchParams(location.search).get("key") || "";
+if (!key) {
+  key = prompt("请输入控制台密钥（xq arena / xq serve 启动时会打印含密钥的链接）：") || "";
+}
+let alive = true, shutdownArmed = false, shutdownTimer = null;
+
+async function api(method, path) {
+  const r = await fetch(path, { method,
+    headers: { "X-Admin-Key": key } });
+  if (r.status === 403) throw new Error("密钥无效。请使用启动时打印的含 key 链接打开。");
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  return r.json();
+}
+
+function fmtDur(s) {
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return (h ? h + " 小时 " : "") + (m || h ? m + " 分 " : "") + sec + " 秒";
+}
+
+const REASON = { checkmate: "将死", timeout: "超时", resign: "认输",
+                 draw_agreement: "协议和棋", halfmove_limit: "自然限着",
+                 aborted: "裁判终止" };
+function gameStatus(g) {
+  if (g.result)
+    return g.result === "draw" ? `和棋 · ${REASON[g.result_reason] || g.result_reason}`
+      : `${g.result === "red_win" ? g.red : g.black} 胜 · ${REASON[g.result_reason] || g.result_reason}`;
+  return g.started ? "进行中" : "等待入座";
+}
+
+async function refresh() {
+  if (!alive) return;
+  try {
+    const s = await api("GET", "/api/admin/status");
+    $("err").style.display = "none";
+    $("wrap").style.display = "flex";
+    $("pid").textContent = s.pid;
+    $("uptime").textContent = fmtDur(s.uptime_s);
+    $("idle").textContent = s.idle_minutes > 0
+      ? `无活动 ${fmtDur(s.idle_in_s)} 后自动关机` : "已关闭（需手动停止）";
+    const tb = $("games-body");
+    tb.innerHTML = "";
+    $("games").style.display = s.games.length ? "table" : "none";
+    $("games-empty").style.display = s.games.length ? "none" : "block";
+    for (const g of s.games) {
+      const tr = document.createElement("tr");
+      const done = !!g.result;
+      tr.innerHTML = `<td class="gid">${g.game_id}</td>
+        <td>${g.red} vs ${g.black}</td><td>${gameStatus(g)}</td><td>${g.ply}</td>
+        <td><button class="link" data-act="watch">观战</button>
+        ${done ? "" : '<button class="link" data-act="abort" style="color:#b03028">终止对局</button>'}</td>`;
+      tr.querySelector('[data-act="watch"]').onclick = () =>
+        window.open(`/watch/${g.game_id}`, "_blank");
+      const ab = tr.querySelector('[data-act="abort"]');
+      if (ab) ab.onclick = async () => {
+        if (!confirm(`确定终止对局 ${g.game_id}？（记为和棋 · 裁判终止）`)) return;
+        await api("POST", `/api/admin/games/${g.game_id}/abort`);
+        refresh();
+      };
+      tb.appendChild(tr);
+    }
+  } catch (e) {
+    if (!alive) return;
+    $("wrap").style.display = "none";
+    $("err").style.display = "block";
+    $("err").textContent = String(e.message || e) + "（或服务器已停止）";
+  }
+}
+
+$("btn-shutdown").onclick = async () => {
+  if (!shutdownArmed) {
+    shutdownArmed = true;
+    $("btn-shutdown").textContent = "再点一次确认停止";
+    shutdownTimer = setTimeout(() => {
+      shutdownArmed = false; $("btn-shutdown").textContent = "停止服务器";
+    }, 3000);
+    return;
+  }
+  clearTimeout(shutdownTimer);
+  try { await api("POST", "/api/admin/shutdown"); } catch (e) { /* 服务器已断开也正常 */ }
+  alive = false;
+  $("wrap").style.display = "none";
+  $("err").style.display = "none";
+  $("stopped").style.display = "block";
+  $("dot").classList.add("dead");
+};
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

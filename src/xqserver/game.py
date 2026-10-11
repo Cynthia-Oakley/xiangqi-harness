@@ -354,6 +354,13 @@ class Game:
                 raise GameOver("对局已结束")
             self._finish("black_win" if color == RED else "red_win", "resign")
 
+    def abort(self):
+        """控制台强制终止：不计胜负，记为和棋 + aborted。"""
+        with self.lock:
+            if self.result:
+                raise GameOver("对局已结束")
+            self._finish("draw", "aborted")
+
     def offer_draw(self, color):
         with self.lock:
             if self.result:

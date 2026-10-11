@@ -1,7 +1,11 @@
-"""FastAPI 裁判服务：HTTP API + SSE 观战广播。"""
+"""FastAPI 裁判服务：HTTP API + SSE 观战广播 + 网页控制台。"""
 
 import asyncio
 import json
+import os
+import secrets
+import signal
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Response
@@ -21,11 +25,54 @@ RULES_TEXT = """中国象棋规则速查（ICCS 坐标：列 a-i 红方视角从
 将死/困毙判负；超时判负；连续无吃子达到自然限着判和。"""
 
 
-def create_app(data_dir="data") -> FastAPI:
+def _load_or_create_admin_key(data_dir) -> str:
+    """控制台密钥：每个数据目录一份，跨重启复用（书签不失效），0600 权限。"""
+    path = Path(data_dir) / "admin_key.txt"
+    if path.exists():
+        return path.read_text().strip()
+    key = secrets.token_urlsafe(12)
+    path.write_text(key)
+    os.chmod(path, 0o600)
+    return key
+
+
+def create_app(data_dir="data", idle_minutes: float = 60, on_shutdown=None) -> FastAPI:
+    """idle_minutes<=0 关闭空闲自动关机；on_shutdown 供测试替换真正的自杀动作。"""
     app = FastAPI(title="Xiangqi Arena")
     store = Store(data_dir)
     subscribers: dict[str, list[asyncio.Queue]] = {}
     notes_persisted: dict[str, int] = {}   # gid → 已落盘的 note 条数（防重复写入）
+    admin_key = _load_or_create_admin_key(data_dir)
+    started_at = time.monotonic()
+    activity = {"last": time.monotonic()}   # 除健康检查/控制台轮询外的最近请求时刻
+
+    @app.middleware("http")
+    async def touch_activity(request, call_next):
+        if not request.url.path.startswith(("/api/rules", "/api/admin")):
+            activity["last"] = time.monotonic()
+        return await call_next(request)
+
+    def check_admin(key):
+        if not key or not secrets.compare_digest(key, admin_key):
+            raise HTTPException(403, "控制台密钥无效")
+
+    @app.on_event("startup")
+    async def idle_watchdog():
+        if idle_minutes <= 0:
+            return
+
+        async def loop():
+            while True:
+                await asyncio.sleep(15)
+                if time.monotonic() - activity["last"] > idle_minutes * 60:
+                    shutdown()
+        asyncio.create_task(loop())
+
+    def shutdown():
+        if on_shutdown:
+            on_shutdown()
+        else:
+            os.kill(os.getpid(), signal.SIGTERM)
 
     def broadcast(gid, event, payload):
         for q in subscribers.get(gid, []):
@@ -287,5 +334,49 @@ def create_app(data_dir="data") -> FastAPI:
     @app.get("/api/rules")
     async def rules():
         return {"rules": RULES_TEXT}
+
+    # ---- 网页控制台（人类管理入口，无需命令行）----
+    @app.get("/admin")
+    async def admin_page():
+        return FileResponse(Path(__file__).parent / "static" / "admin.html",
+                            media_type="text/html")
+
+    @app.get("/api/admin/status")
+    async def admin_status(key: str | None = None,
+                           x_admin_key: str | None = Header(None)):
+        check_admin(key or x_admin_key)
+        idle_in = (None if idle_minutes <= 0 else
+                   max(0.0, idle_minutes * 60 - (time.monotonic() - activity["last"])))
+        return {
+            "pid": os.getpid(),
+            "uptime_s": round(time.monotonic() - started_at, 1),
+            "idle_minutes": idle_minutes,
+            "idle_in_s": None if idle_in is None else round(idle_in, 1),
+            "games": [{
+                "game_id": g.id, "red": g.names["r"], "black": g.names["b"],
+                "started": g.started, "result": g.result,
+                "result_reason": g.result_reason, "ply": len(g.history),
+            } for g in store.games.values()],
+        }
+
+    @app.post("/api/admin/games/{gid}/abort")
+    async def admin_abort(gid: str, key: str | None = None,
+                          x_admin_key: str | None = Header(None)):
+        check_admin(key or x_admin_key)
+        g = get_game(gid)
+        g.abort()
+        flush_events(g)
+        return {"result": g.result, "result_reason": g.result_reason}
+
+    @app.post("/api/admin/shutdown")
+    async def admin_shutdown(key: str | None = None,
+                             x_admin_key: str | None = Header(None)):
+        check_admin(key or x_admin_key)
+
+        async def later():
+            await asyncio.sleep(0.5)         # 先把响应发出去
+            shutdown()
+        asyncio.create_task(later())
+        return {"ok": True, "message": "裁判服务器即将停止"}
 
     return app
