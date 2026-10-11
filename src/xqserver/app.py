@@ -84,11 +84,25 @@ def create_app(data_dir="data") -> FastAPI:
                 "black_token": g.tokens["b"],
                 "watch_url": f"/api/games/{g.id}/spectate"}
 
+    @app.post("/api/games/{gid}/join")
+    async def join_game(gid: str, x_seat_token: str | None = Header(None)):
+        g = get_game(gid)
+        color = seat_color(g, x_seat_token)
+        if g.join(color):            # 本调用凑齐双方 → 开赛，广播给观战页
+            broadcast(gid, "start", {"names": g.names, "fen": g.board.to_fen(),
+                                     "clocks": g.clocks()})
+        opp = "b" if color == "r" else "r"
+        return {"ok": True, "started": g.started,
+                "waiting_for": None if g.started else g.names[opp]}
+
     @app.get("/api/games/{gid}/state")
     async def state(gid: str, x_seat_token: str | None = Header(None)):
         g = get_game(gid)
         color = seat_color(g, x_seat_token)
+        prev = g.result
         st = g.state_for(color)
+        if g.result and not prev:      # 查询结算出的终局也要推给观战者
+            broadcast(gid, "result", {"result": g.result, "reason": g.result_reason})
         if st["your_turn"]:
             st["legal_moves"] = legal_moves(g.board, color)
         return st
@@ -113,7 +127,7 @@ def create_app(data_dir="data") -> FastAPI:
         done = notes_persisted.get(gid, 0)
         for n in g.notes[done:]:         # 只落盘尚未持久化的 note（含 move 附带的）
             persist_note(g, n)
-        broadcast(gid, "move", entry)
+        broadcast(gid, "move", entry | {"clocks": g.clocks()})
         if g.result:
             broadcast(gid, "result", {"result": g.result, "reason": g.result_reason})
         return entry | {"result": g.result, "result_reason": g.result_reason}
@@ -181,7 +195,7 @@ def create_app(data_dir="data") -> FastAPI:
                 "fen": g.board.to_fen(), "history": g.history,
                 "notes": g.notes, "clocks": g.clocks(),
                 "names": g.names, "result": g.result,
-                "result_reason": g.result_reason,
+                "result_reason": g.result_reason, "started": g.started,
             }
             yield f"event: snapshot\ndata: {json.dumps(snapshot, ensure_ascii=False)}\n\n"
             try:

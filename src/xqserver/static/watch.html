@@ -32,6 +32,11 @@
     color: var(--red); font-size: 20px; letter-spacing: 4px; width: fit-content;
     background: #fff8;
   }
+  #wait-banner {
+    display: none; margin: 10px auto 0; padding: 6px 22px;
+    border: 1px dashed var(--muted); border-radius: 4px;
+    color: var(--muted); font-size: 15px; letter-spacing: 3px; width: fit-content;
+  }
   main { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
   .card {
     background: var(--card); border: 1px solid #e0d3b0; border-radius: 6px;
@@ -70,6 +75,7 @@
   <h1>棋 局 观 战</h1>
   <div class="gid" id="gid"></div>
   <div id="result-banner"></div>
+  <div id="wait-banner">等待双方入座，计时尚未开始</div>
 </header>
 <main>
   <div class="side card" style="padding:0">
@@ -190,7 +196,8 @@ function renderBoard(fen) {
 }
 
 /* ================= 数据区 ================= */
-const state = { names: { r: "红", b: "黑" }, clocks: { r: 0, b: 0 }, turn: "r", result: null };
+const state = { names: { r: "红", b: "黑" }, clocks: { r: 0, b: 0 }, turn: "r",
+                result: null, started: false };
 const $ = id => document.getElementById(id);
 const REASON = { checkmate: "将死", timeout: "超时判负", resign: "认输",
                  draw_agreement: "协议和棋", halfmove_limit: "自然限着" };
@@ -207,12 +214,13 @@ function paintClocks() {
   for (const s of ["r", "b"]) {
     const e = $("clock-" + s);
     e.textContent = fmtClock(state.clocks[s]);
-    e.classList.toggle("low", state.clocks[s] < 60);
-    $("dot-" + s).classList.toggle("on", state.turn === s && !state.result);
+    e.classList.toggle("low", state.started && state.clocks[s] < 60);
+    $("dot-" + s).classList.toggle("on", state.started && state.turn === s && !state.result);
   }
+  $("wait-banner").style.display = (state.started || state.result) ? "none" : "block";
 }
-setInterval(() => {           // 本地递减走棋方时钟，事件到达时再校准
-  if (!state.result && state.turn) { state.clocks[state.turn] -= 0.25; paintClocks(); }
+setInterval(() => {           // 本地递减走棋方时钟，事件到达时再校准；开赛前后不动
+  if (state.started && !state.result && state.turn) { state.clocks[state.turn] -= 0.25; paintClocks(); }
 }, 250);
 
 function addMove(entry) {
@@ -260,7 +268,7 @@ const es = new EventSource(`/api/games/${gid}/spectate`);
 
 es.addEventListener("snapshot", e => {
   const d = JSON.parse(e.data);
-  state.names = d.names; state.result = d.result;
+  state.names = d.names; state.result = d.result; state.started = !!d.started;
   $("name-r").textContent = d.names.r; $("name-b").textContent = d.names.b;
   state.clocks = { r: d.clocks.remaining.r, b: d.clocks.remaining.b };
   $("moves-body").innerHTML = ""; $("notes-r").innerHTML = ""; $("notes-b").innerHTML = "";
@@ -271,9 +279,17 @@ es.addEventListener("snapshot", e => {
   if (d.result) showResult(d.result, d.result_reason);
 });
 
+es.addEventListener("start", e => {      // 双方入座，开赛
+  const d = JSON.parse(e.data);
+  state.started = true;
+  state.clocks = { r: d.clocks.remaining.r, b: d.clocks.remaining.b };
+  applyBoardState(d.fen);
+});
+
 es.addEventListener("move", e => {
   const m = JSON.parse(e.data);
   lastMove = iccsToCells(m.iccs);
+  if (m.clocks) state.clocks = { r: m.clocks.remaining.r, b: m.clocks.remaining.b };
   applyBoardState(m.fen);
   addMove(m);
 });

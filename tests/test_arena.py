@@ -50,10 +50,18 @@ async def test_setup_arena_full(tmp_path, monkeypatch):
             seat = json.loads((d / ".xqseat.json").read_text())
             assert stat.S_IMODE(os.stat(d / ".xqseat.json").st_mode) == 0o600
             assert seat["game_id"] == gid
-        # 预入座后可直接用座位走棋：红方 state → move → commit
-        seat = json.loads((tmp_path / "arena" / f"{gid}-red" / ".xqseat.json").read_text())
-        h = {"X-Seat-Token": seat["token"]}
+        # 预入座提供座位令牌；Agent 按 PROMPT 跑 join 后双方到齐才开赛
+        seats = {cn: json.loads((tmp_path / "arena" / f"{gid}-{cn}" / ".xqseat.json").read_text())
+                 for cn in ("red", "black")}
         async with httpx.AsyncClient(base_url=url) as c:
+            h = {"X-Seat-Token": seats["red"]["token"]}
+            st = (await c.get(f"/api/games/{gid}/state", headers=h)).json()
+            assert st["started"] is False and st["your_turn"] is False
+            for cn in ("red", "black"):
+                r = await c.post(f"/api/games/{gid}/join",
+                                 headers={"X-Seat-Token": seats[cn]["token"]})
+                assert r.status_code == 200
+            assert r.json()["started"] is True
             st = (await c.get(f"/api/games/{gid}/state", headers=h)).json()
             assert st["your_turn"] is True
             pv = (await c.post(f"/api/games/{gid}/move",

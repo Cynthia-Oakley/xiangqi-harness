@@ -10,6 +10,7 @@ def test_prompt_template_content():
     assert "xq wait" in p and "xq move" in p and "xq commit" in p
     assert "蹩马腿" in p and "炮架" in p          # 规则速查
     assert "h2e2" in p                           # ICCS 示例
+    assert "双方入座" in p                        # 计时从双方都 join 才开始
     p2 = render_agent_prompt("g-1", "b", "tok456", "http://127.0.0.1:8000")
     assert "黑方" in p2 and "tok456" in p2
 
@@ -26,15 +27,17 @@ def test_seat_file_permissions(tmp_path, monkeypatch):
 
 
 def test_prompt_join_command_actually_runs(tmp_path, monkeypatch):
-    """C1 回归：提示词里的 join 命令必须能被 CLI 真实执行。"""
+    """C1 回归：提示词里的 join 命令必须能被 CLI 真实执行。
+    服务器不可达时降级为仅本地入座（警告提示），exit 仍为 0。"""
     monkeypatch.chdir(tmp_path)
     from typer.testing import CliRunner
     from xqcli.main import app
     p = render_agent_prompt("g-1", "r", "tok123", "http://127.0.0.1:8000")
     assert "xq join g-1 red tok123" in p   # 模板与 CLI 位置参数签名一致
     r = CliRunner().invoke(app, ["join", "g-1", "red", "tok123",
-                                 "--server", "http://127.0.0.1:8000"])
+                                 "--server", "http://127.0.0.1:9"])
     assert r.exit_code == 0, r.output
+    assert "警告" in r.output              # 明确告知未向服务器注册
 
 
 def test_parse_duration():

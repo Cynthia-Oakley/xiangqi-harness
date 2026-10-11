@@ -1,3 +1,5 @@
 arena/
 data/
 seats/
+__pycache__/
+*.pyc

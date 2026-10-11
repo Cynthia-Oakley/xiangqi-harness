@@ -16,6 +16,7 @@ TEMPLATE = """# 中国象棋对弈任务
 ```bash
 {xq_cmd} join {game_id} {color} {token} --server {server}
 ```
+计时从**双方入座**后才开始，开局快慢不影响你的用时；入座后若提示等待对方，直接 `xq wait` 即可。
 
 ## 对弈循环（严格遵守）
 1. `xq wait` —— 阻塞等待轮到你。输出里 `轮到你: True` 才轮到你。

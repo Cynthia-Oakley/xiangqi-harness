@@ -38,7 +38,9 @@ class Game:
         self.increment = float(increment)
         self.draw_halfmoves = draw_halfmoves
         self.remaining = {RED: float(base_seconds), BLACK: float(base_seconds)}
-        self.turn_started = time.monotonic()
+        self.joined = {RED: False, BLACK: False}
+        self.started = False
+        self.turn_started = None       # 双方入座后才置为 time.monotonic()
         self.pending = None          # {"id","color","move","board_after","expires"}
         self.result = None
         self.result_reason = None
@@ -52,24 +54,40 @@ class Game:
         if not token or not secrets.compare_digest(token, self.tokens.get(color, "")):
             raise AuthError("令牌无效")
 
+    # ---- 入座与开赛 ----
+    def join(self, color):
+        """入座；双方到齐即开赛（计时从此刻开始）。返回 True 表示本调用触发了开赛。"""
+        with self.lock:
+            if self.result:
+                raise GameOver("对局已结束")
+            self.joined[color] = True
+            if self.started or not all(self.joined.values()):
+                return False
+            self.started = True
+            self.turn_started = time.monotonic()
+            return True
+
     # ---- 计时 ----
     def _elapsed(self):
+        if not self.started:
+            return 0.0
         return time.monotonic() - self.turn_started
 
     def clocks(self):
         side = self.board.turn
         out = {s: round(t, 1) for s, t in self.remaining.items()}
-        if not self.result:
+        if not self.result and self.started:
             out[side] = round(self.remaining[side] - self._elapsed(), 1)
         return {
             "remaining": out,
-            "step_remaining": None if self.result else round(self.step_seconds - self._elapsed(), 1),
+            "step_remaining": None if (self.result or not self.started)
+            else round(self.step_seconds - self._elapsed(), 1),
         }
 
     def settle_timeout(self):
         """非抛出版超时结算：任何查询入口都可调用，让对局不再因双方不操作而悬置。"""
         with self.lock:
-            if self.result:
+            if self.result or not self.started:
                 return False
             side = self.board.turn
             if self._elapsed() > self.step_seconds or self.remaining[side] - self._elapsed() <= 0:
@@ -88,6 +106,9 @@ class Game:
     def propose_move(self, color, iccs, note=None):
         with self.lock:
             self._expire_if_timeout()
+            if not self.started:
+                opp = BLACK if color == RED else RED
+                raise RuleError(f"对局尚未开始：等待 {self.names[opp]} 入座后计时才开始")
             if color != self.board.turn:
                 raise TurnError(f"还没轮到{self.names[color]}走棋")
             if not is_valid_iccs(iccs):
@@ -210,7 +231,9 @@ class Game:
                 "game_id": self.id,
                 "your_color": color,
                 "turn": self.board.turn,
-                "your_turn": self.board.turn == color and self.result is None,
+                "started": self.started,
+                "joined": dict(self.joined),
+                "your_turn": self.started and self.board.turn == color and self.result is None,
                 "fen": self.board.to_fen(),
                 "ascii": render_ascii(self.board),
                 "ply": len(self.history),

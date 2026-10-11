@@ -3,7 +3,66 @@ from xqserver.game import AuthError, Game, GameOver, RuleError, TurnError
 
 
 def make_game(**kw):
-    return Game("g1", "Kimi", "Claude", **kw)
+    g = Game("g1", "Kimi", "Claude", **kw)
+    g.join("r")
+    g.join("b")
+    return g
+
+
+def test_join_starts_the_clock():
+    """双方 join 后才开始计时；只有一方入座不开赛。"""
+    g = Game("g1", "Kimi", "Claude")
+    assert g.started is False
+    assert g.join("r") is False              # 只有红方，未开赛
+    assert g.started is False
+    assert g.join("b") is True               # 黑方到齐，本调用触发开赛
+    assert g.started is True
+    ts = g.turn_started
+    assert ts is not None
+    assert g.join("r") is False              # 重复入座不重置时钟
+    assert g.turn_started == ts
+
+
+def test_no_timeout_before_start():
+    """开赛前永不超时：即使超过步时/局时，也不判负。"""
+    import time
+    g = Game("g1", "Kimi", "Claude", step_seconds=0.05, base_seconds=0.05)
+    time.sleep(0.1)
+    assert g.settle_timeout() is False
+    assert g.result is None
+    g.join("r")
+    g.join("b")
+    time.sleep(0.1)
+    assert g.settle_timeout() is True        # 开赛后才结算超时
+    assert g.result == "black_win" and g.result_reason == "timeout"
+
+
+def test_no_move_before_start():
+    g = Game("g1", "Kimi", "Claude")
+    with pytest.raises(RuleError):
+        g.propose_move("r", "h2e2")
+    st = g.state_for("r")
+    assert st["started"] is False and st["your_turn"] is False
+    assert st["joined"] == {"r": False, "b": False}
+    g.join("r")
+    st = g.state_for("r")
+    assert st["started"] is False and st["your_turn"] is False   # 仍等黑方
+    g.join("b")
+    st = g.state_for("r")
+    assert st["started"] is True and st["your_turn"] is True
+
+
+def test_clocks_frozen_before_start():
+    import time
+    g = Game("g1", "Kimi", "Claude", base_seconds=900, step_seconds=180)
+    time.sleep(0.05)
+    c = g.clocks()
+    assert c["remaining"] == {"r": 900.0, "b": 900.0}   # 未开赛不递减
+    assert c["step_remaining"] is None
+    g.join("r")
+    g.join("b")
+    c = g.clocks()
+    assert c["step_remaining"] is not None
 
 
 def test_tokens_and_auth():

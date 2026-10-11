@@ -21,8 +21,51 @@ async def new_game(client, **kw):
     return r.json()
 
 
+async def join(client, g, side):
+    r = await client.post(f"/api/games/{g['game_id']}/join",
+                          headers={"X-Seat-Token": g[f"{side}_token"]})
+    assert r.status_code == 200
+    return r.json()
+
+
+async def join_both(client, g):
+    await join(client, g, "red")
+    await join(client, g, "black")
+
+
+async def test_join_flow_and_start_gate(client):
+    """双方 join 才开赛：开赛前不能走棋、超时也不判负。"""
+    g = await new_game(client, step_seconds=0.2)
+    gid = g["game_id"]
+    r = await client.post(f"/api/games/{gid}/move", json={"move": "h2e2"},
+                          headers={"X-Seat-Token": g["red_token"]})
+    assert r.status_code == 400                     # 开赛前禁止走棋
+    r = await client.post(f"/api/games/{gid}/join",
+                          headers={"X-Seat-Token": "wrong"})
+    assert r.status_code == 403
+    rj = await join(client, g, "red")
+    assert rj["started"] is False and rj["waiting_for"] == "Claude"
+    st = (await client.get(f"/api/games/{gid}/state",
+                           headers={"X-Seat-Token": g["red_token"]})).json()
+    assert st["started"] is False and st["your_turn"] is False
+    await asyncio.sleep(0.4)                        # 超过步时，但未开赛
+    st = (await client.get(f"/api/games/{gid}/state",
+                           headers={"X-Seat-Token": g["black_token"]})).json()
+    assert st["result"] is None
+    rj = await join(client, g, "black")
+    assert rj["started"] is True and rj["waiting_for"] is None
+    st = (await client.get(f"/api/games/{gid}/state",
+                           headers={"X-Seat-Token": g["red_token"]})).json()
+    assert st["started"] is True and st["your_turn"] is True
+    await asyncio.sleep(0.4)                        # 开赛后超时结算恢复
+    st = (await client.get(f"/api/games/{gid}/state",
+                           headers={"X-Seat-Token": g["black_token"]})).json()
+    assert st["result"] == "black_win" and st["result_reason"] == "timeout"
+
+
 async def test_create_and_state(client):
     g = await new_game(client)
+    await join_both(client, g)
     r = await client.get(f"/api/games/{g['game_id']}/state",
                          headers={"X-Seat-Token": g["red_token"]})
     st = r.json()
@@ -46,6 +89,7 @@ async def test_auth_rejection(client):
 
 async def test_malformed_move_400(client):
     g = await new_game(client)
+    await join_both(client, g)
     for bad in ("z9z9", "h2e3", "", "h2h2"):
         r = await client.post(f"/api/games/{g['game_id']}/move",
                               json={"move": bad},
@@ -58,6 +102,7 @@ async def test_malformed_move_400(client):
 
 async def test_wrong_turn_409(client):
     g = await new_game(client)
+    await join_both(client, g)
     r = await client.post(f"/api/games/{g['game_id']}/move",
                           json={"move": "b9c7"},
                           headers={"X-Seat-Token": g["black_token"]})
@@ -66,6 +111,7 @@ async def test_wrong_turn_409(client):
 
 async def test_full_move_cycle_and_jsonl(client, tmp_path):
     g = await new_game(client, draw_halfmoves=2)
+    await join_both(client, g)
     r = await client.post(f"/api/games/{g['game_id']}/move",
                           json={"move": "h2e2", "note": "架中炮"},
                           headers={"X-Seat-Token": g["red_token"]})
@@ -108,8 +154,11 @@ async def test_spectate_snapshot(tmp_path):
             gid = r.json()["game_id"]
             async with c.stream("GET", f"/api/games/{gid}/spectate") as resp:
                 assert resp.status_code == 200
-                first = await resp.aiter_lines().__anext__()
+                lines = resp.aiter_lines()
+                first = await lines.__anext__()
+                second = await lines.__anext__()
         assert "snapshot" in first
+        assert '"started"' in second and '"names"' in second
     finally:
         # uvicorn 等待连接任务自然结束，而 SSE 连接任务要等下一次读才感知断连，
         # 优雅退出会卡住；测试中直接取消服务任务。
@@ -143,11 +192,56 @@ async def test_watch_page_served(client):
     assert "text/html" in r.headers["content-type"]
     assert "EventSource" in r.text and "/api/games/" in r.text
     assert "楚河" in r.text                        # 象棋元素
+    assert 'addEventListener("start"' in r.text    # 开赛事件：撤下等待横幅
+    assert "m.clocks" in r.text                    # 每步用服务端时钟重新校准
+
+
+async def test_state_settle_broadcasts_result(tmp_path):
+    """超时由 state 查询结算时，观战 SSE 也要收到 result 事件。"""
+    app = create_app(data_dir=str(tmp_path))
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port,
+                                           log_level="error"))
+    task = asyncio.create_task(server.serve())
+    while not server.started:
+        await asyncio.sleep(0.05)
+    try:
+        async with AsyncClient(base_url=f"http://127.0.0.1:{port}") as c:
+            g = (await c.post("/api/games", json={
+                "red_name": "A", "black_name": "B",
+                "step_seconds": 0.2, "increment": 0})).json()
+            gid = g["game_id"]
+            for t in (g["red_token"], g["black_token"]):
+                await c.post(f"/api/games/{gid}/join", headers={"X-Seat-Token": t})
+            async with c.stream("GET", f"/api/games/{gid}/spectate") as resp:
+                await asyncio.sleep(0.4)            # 红方超步时
+                st = (await c.get(f"/api/games/{gid}/state",
+                                  headers={"X-Seat-Token": g["black_token"]})).json()
+                assert st["result"] == "black_win"
+                buf = ""
+                got_result_event = False
+                async for line in resp.aiter_lines():
+                    buf += line + "\n"
+                    if line.startswith("event: result"):
+                        got_result_event = True
+                    elif got_result_event and line.startswith("data:"):
+                        break
+                assert "event: result" in buf and "black_win" in buf
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 async def test_notes_not_duplicated_in_jsonl(client, tmp_path):
     """I1 回归：每条思考在棋谱里只出现一次。"""
     g = await new_game(client)
+    await join_both(client, g)
     gid = g["game_id"]
     await client.post(f"/api/games/{gid}/note", json={"text": "单独思考"},
                       headers={"X-Seat-Token": g["red_token"]})
@@ -164,8 +258,9 @@ async def test_notes_not_duplicated_in_jsonl(client, tmp_path):
 
 
 async def test_timeout_settled_on_state(client):
-    """I2 回归：走棋方超时后不行动，对手查 state 也能拿到终局。"""
+    """I2 回归：开赛后走棋方超时且不行动，对手查 state 也能拿到终局。"""
     g = await new_game(client, step_seconds=0.2, increment=0)
+    await join_both(client, g)
     await asyncio.sleep(0.4)
     st = await client.get(f"/api/games/{g['game_id']}/state",
                           headers={"X-Seat-Token": g["black_token"]})

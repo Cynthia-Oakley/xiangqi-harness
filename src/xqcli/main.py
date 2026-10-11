@@ -26,7 +26,12 @@ def load_seat() -> dict:
 
 def client(seat) -> httpx.Client:
     return httpx.Client(base_url=seat["server"],
-                        headers={"X-Seat-Token": seat["token"]}, timeout=60)
+                        headers={"X-Seat-Token": seat["token"]}, timeout=60,
+                        trust_env=False)     # 裁判服务器在本机，绕开系统代理
+
+
+def bare_client(server) -> httpx.Client:
+    return httpx.Client(base_url=server, timeout=60, trust_env=False)
 
 
 def show(resp: httpx.Response):
@@ -79,12 +84,13 @@ def arena(red_name: str, black_name: str, port: int = 8000,
 @app.command()
 def new(red_name: str, black_name: str, server: str = DEFAULT_SERVER,
         time_limit: str = "15m", step_time: str = "3m", increment: int = 10):
-    r = httpx.post(f"{server}/api/games", json={
-        "red_name": red_name, "black_name": black_name,
-        "base_seconds": parse_duration(time_limit),
-        "step_seconds": parse_duration(step_time),
-        "increment": increment,
-    })
+    with bare_client(server) as c:
+        r = c.post("/api/games", json={
+            "red_name": red_name, "black_name": black_name,
+            "base_seconds": parse_duration(time_limit),
+            "step_seconds": parse_duration(step_time),
+            "increment": increment,
+        })
     g = show(r)
     from xqcli.prompt_template import render_agent_prompt
     seats = Path("seats")
@@ -116,7 +122,20 @@ def join(game_id: str, color: str, token: str, server: str = DEFAULT_SERVER):
         typer.echo(f"颜色只能是 red 或 black: {color!r}", err=True)
         raise typer.Exit(1)
     save_seat({"server": server, "game_id": game_id, "color": c, "token": token})
-    typer.echo(f"已入座 {color}，对局 {game_id}")
+    try:
+        with bare_client(server) as bc:
+            r = bc.post(f"/api/games/{game_id}/join",
+                        headers={"X-Seat-Token": token})
+        resp = show(r)
+    except httpx.TransportError:
+        typer.echo(f"已入座 {color}（仅本地）。警告：无法连接裁判服务器 {server}，"
+                   "对局计时不会开始；服务器可用后请重新运行本命令。")
+        return
+    if resp["started"]:
+        typer.echo(f"已入座 {color}，双方到齐——对局开始，计时启动。")
+    else:
+        typer.echo(f"已入座 {color}，等待 {resp['waiting_for']} 入座；"
+                   "双方入座后计时才开始。")
 
 
 @app.command()
@@ -205,8 +224,8 @@ def accept_draw():
 
 @app.command()
 def rules(server: str = DEFAULT_SERVER):
-    r = httpx.get(f"{server}/api/rules")
-    typer.echo(r.json()["rules"])
+    with bare_client(server) as c:
+        typer.echo(c.get("/api/rules").json()["rules"])
 
 
 @app.command()

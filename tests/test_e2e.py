@@ -10,6 +10,10 @@ async def test_two_agents_play_full_game(tmp_path):
             "red_name": "AgentA", "black_name": "AgentB",
             "draw_halfmoves": 8, "step_seconds": 600})).json()
         tokens = {"r": g["red_token"], "b": g["black_token"]}
+        for color in ("r", "b"):
+            r = await c.post(f"/api/games/{g['game_id']}/join",
+                             headers={"X-Seat-Token": tokens[color]})
+            assert r.status_code == 200
         result = None
         for _ in range(30):
             for color in ("r", "b"):
