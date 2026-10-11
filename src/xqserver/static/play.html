@@ -451,8 +451,11 @@ function boardPoint(evt) {
 }
 
 svg.addEventListener("click", evt => {
-  if (!st.started || st.result || pending || !st.turn) return;
-  if (me.color !== st.turn) return;                     // 非自己回合
+  if (st.result || pending) return;
+  if (!st.started || !st.turn) {                        // 对局未开始（对方未入座）
+    toast("对方尚未入座，对局未开始，暂不能走子"); return;
+  }
+  if (me.color !== st.turn) { toast("还没轮到你走棋"); return; }
   const p = boardPoint(evt);
   if (!p) { selection = null; applySelection(); return; }
   const grid = parseFenBoard(currentFen);
