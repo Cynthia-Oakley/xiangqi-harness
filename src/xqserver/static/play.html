@@ -140,6 +140,16 @@
       <div class="panel-title"><span>棋 谱</span></div>
       <div id="moves"><table><tbody id="moves-body"></tbody></table></div>
     </div>
+    <div class="card" id="assist-card" style="padding:0;display:none">
+      <div class="panel-title">
+        <span>辅助模式</span>
+        <button id="btn-inspect" style="font-family:inherit;font-size:12px;cursor:pointer;
+          border:1px solid var(--line);border-radius:4px;background:#fffdf6;
+          color:var(--ink);padding:2px 10px">清点模式：关</button>
+      </div>
+      <div id="assist-out" style="padding:8px 12px;font-size:13px;line-height:1.7;
+        white-space:pre-wrap;max-height:260px;overflow-y:auto;color:var(--ink)">开启清点模式后，点击棋盘任意格查看该格的攻防清点；每次落子后这里会显示走后自检。</div>
+    </div>
     <div class="card" id="actions">
       <button id="btn-resign" class="danger">认输</button>
       <button id="btn-draw">提和</button>
@@ -410,6 +420,7 @@ function applyState(s) {
   st.clocks = { r: s.clocks.remaining.r, b: s.clocks.remaining.b };
   me.names = s.names;
   currentFen = s.fen;
+  if (s.assist) $("assist-card").style.display = "block";
   lastMove = s.last_move && s.last_move.iccs !== "pass"
     ? iccsToCells(s.last_move.iccs) : lastMove;
   renderBoard(s.fen);
@@ -439,6 +450,25 @@ function applyState(s) {
 }
 let lastLogPly = -1;
 
+/* ================= 辅助模式：落点清点 + 走后自检 ================= */
+let inspectMode = false;
+function showAssist(text) { $("assist-out").textContent = text; }
+
+async function doInspect(sq) {
+  try {
+    const d = await api("GET", `/api/games/${gid}/inspect/${sq}`);
+    showAssist(d.report);
+  } catch (e) { if (e.fatal) return fatal(); toast(e.message); }
+}
+
+$("btn-inspect").addEventListener("click", () => {
+  inspectMode = !inspectMode;
+  $("btn-inspect").textContent = inspectMode ? "清点模式：开（点格子查看）" : "清点模式：关";
+  $("btn-inspect").style.borderColor = inspectMode ? "var(--red)" : "var(--line)";
+  $("btn-inspect").style.color = inspectMode ? "var(--red)" : "var(--ink)";
+  selection = null; targets = new Map(); renderBoard(currentFen);
+});
+
 /* ================= 走棋交互（两阶段：选子 → 预览确认） ================= */
 function boardPoint(evt) {
   const rect = svg.getBoundingClientRect();
@@ -453,11 +483,19 @@ function boardPoint(evt) {
 
 svg.addEventListener("click", evt => {
   if (st.result || pending) return;
+  const p = boardPoint(evt);
+  if (inspectMode) {                                // 清点模式：点格子只查攻防，不走子
+    if (p) {
+      selection = { c: p.c, r: p.r };
+      renderBoard(currentFen);
+      doInspect(sqName(p.c, p.r));
+    }
+    return;
+  }
   if (!st.started || !st.turn) {                        // 对局未开始（对方未入座）
     toast("对方尚未入座，对局未开始，暂不能走子"); return;
   }
   if (me.color !== st.turn) { toast("还没轮到你走棋"); return; }
-  const p = boardPoint(evt);
   if (!p) { selection = null; applySelection(); return; }
   const grid = parseFenBoard(currentFen);
   const piece = grid[p.r] && grid[p.r][p.c];
@@ -508,8 +546,9 @@ async function settle(ok) {
   selection = null; targets = new Map();
   try {
     if (ok) {
-      await api("POST", `/api/games/${gid}/commit`, { pending_id: pv.pending_id });
+      const d = await api("POST", `/api/games/${gid}/commit`, { pending_id: pv.pending_id });
       movesCache = null;
+      if (d.self_check) showAssist("走后自检\n" + d.self_check);   // 辅助模式
     } else {
       await api("POST", `/api/games/${gid}/cancel`, { pending_id: pv.pending_id });
     }

@@ -134,6 +134,7 @@ def create_app(data_dir="data", idle_minutes: float = 60, on_shutdown=None) -> F
         increment: float = 20
         draw_halfmoves: int = 120
         step_timeout: str = "pass"
+        assist: bool = False
 
     @app.post("/api/games")
     async def new_game(body: NewGame):
@@ -144,9 +145,10 @@ def create_app(data_dir="data", idle_minutes: float = 60, on_shutdown=None) -> F
                          step_seconds=body.step_seconds,
                          increment=body.increment,
                          draw_halfmoves=body.draw_halfmoves,
-                         step_timeout=body.step_timeout)
+                         step_timeout=body.step_timeout,
+                         assist=body.assist)
         return {"game_id": g.id, "red_token": g.tokens["r"],
-                "black_token": g.tokens["b"],
+                "black_token": g.tokens["b"], "assist": g.assist,
                 "watch_url": f"/api/games/{g.id}/spectate"}
 
     @app.post("/api/games/{gid}/join")
@@ -187,9 +189,13 @@ def create_app(data_dir="data", idle_minutes: float = 60, on_shutdown=None) -> F
     async def game_log(gid: str, x_seat_token: str | None = Header(None)):
         g = get_game(gid)
         color = seat_color(g, x_seat_token)
-        return {"moves": [{k: e[k] for k in ("ply", "color", "iccs", "chinese", "elapsed")}
-                          | {"captured": e.get("captured")}
-                          for e in g.history],
+        def entry(e):
+            d = {k: e[k] for k in ("ply", "color", "iccs", "chinese", "elapsed")}
+            d["captured"] = e.get("captured")
+            if e.get("self_check") is not None:      # 仅辅助模式对局有此字段
+                d["self_check"] = e["self_check"]
+            return d
+        return {"moves": [entry(e) for e in g.history],
                 "time_status": g.time_status(color)}
 
     @app.get("/api/games/{gid}/moves")
@@ -198,6 +204,14 @@ def create_app(data_dir="data", idle_minutes: float = 60, on_shutdown=None) -> F
         color = seat_color(g, x_seat_token)
         return {"moves": g.moves_detail(color),
                 "time_status": g.time_status(color)}
+
+    @app.get("/api/games/{gid}/inspect/{square}")
+    async def inspect_square(gid: str, square: str, token: str | None = None,
+                             x_seat_token: str | None = Header(None)):
+        """辅助模式：落点攻防清点（仅 assist 对局可用）。"""
+        g = get_game(gid)
+        seat_color(g, token or x_seat_token)            # 仅对局双方可查
+        return {"square": square, "report": g.inspect_square(square)}
 
     class MoveIn(BaseModel):
         move: str

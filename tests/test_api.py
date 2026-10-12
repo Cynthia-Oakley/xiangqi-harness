@@ -419,3 +419,51 @@ async def test_board_png_endpoint(client):
     assert red.content != black.content                # 黑方视角已翻转
     bad = await client.get(f"/api/games/{gid}/board.png", params={"token": "wrong"})
     assert bad.status_code == 403
+
+
+async def test_assist_inspect(client):
+    """辅助模式：inspect 端点只在 assist 对局开放，且仅对局双方可查。"""
+    g = await new_game(client)                       # 非辅助局
+    gid = g["game_id"]
+    r = await client.get(f"/api/games/{gid}/inspect/e4",
+                         headers={"X-Seat-Token": g["red_token"]})
+    assert r.status_code == 400 and "辅助模式" in r.json()["error"]
+
+    g = await new_game(client, assist=True)          # 辅助局
+    gid = g["game_id"]
+    assert g["assist"] is True
+    r = await client.get(f"/api/games/{gid}/inspect/e4",
+                         headers={"X-Seat-Token": g["red_token"]})
+    assert r.status_code == 200
+    assert r.json()["square"] == "e4" and "e4" in r.json()["report"]
+    # query token 方式（人类网页端）也可用
+    r = await client.get(f"/api/games/{gid}/inspect/h2",
+                         params={"token": g["black_token"]})
+    assert r.status_code == 200
+    # 格式错误 / 无令牌
+    assert (await client.get(f"/api/games/{gid}/inspect/zz",
+                             headers={"X-Seat-Token": g["red_token"]})).status_code == 400
+    assert (await client.get(f"/api/games/{gid}/inspect/e4")).status_code == 403
+    # state 里带 assist 标记（人类网页端据此显示辅助面板）
+    st = (await client.get(f"/api/games/{gid}/state",
+                           headers={"X-Seat-Token": g["red_token"]})).json()
+    assert st["assist"] is True
+
+
+async def test_assist_self_check_on_play(client):
+    """辅助模式：play 落子返回里带走后自检；非辅助局不带。"""
+    g = await new_game(client, assist=True)
+    await join_both(client, g)
+    gid = g["game_id"]
+    h = {"X-Seat-Token": g["red_token"]}
+    r = await client.post(f"/api/games/{gid}/play", json={"move": "h2e2"}, headers=h)
+    assert r.status_code == 200
+    assert "self_check" in r.json()
+    log = (await client.get(f"/api/games/{gid}/log", headers=h)).json()
+    assert "self_check" in log["moves"][0]           # 记入棋谱（复盘可见）
+
+    g2 = await new_game(client)
+    await join_both(client, g2)
+    r = await client.post(f"/api/games/{g2['game_id']}/play", json={"move": "h2e2"},
+                          headers={"X-Seat-Token": g2["red_token"]})
+    assert "self_check" not in r.json()

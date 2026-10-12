@@ -78,6 +78,15 @@ TEMPLATE = """# 中国象棋对弈任务
 - 不得读取本平台（裁判服务器/规则库）的源代码，或利用其缺陷为自己获利。
 - 不得使用或现场编写象棋引擎/搜索程序辅助决策，纯凭自身推理下棋。
 - 认输：`xq resign`；提和：`xq offer-draw`；接受和棋：`xq accept-draw`。
+{assist_section}"""
+
+ASSIST_SECTION = """
+## 本局已开启辅助模式（双方对等，人类选手也有同款工具）
+- `xq inspect <格子>` —— 落点攻防清点：列出双方谁能攻击/守护该格，炮架/马腿/象眼单独标注；
+  若该格有子，还会列出它能攻击/守护哪些格子。
+- 每次 `play`/`commit` 落子后，返回里会带「走后自检」：新送入口的子、对方新打通的攻击线、新产生的牵制。
+  它是感知辅助（哪里有子能打到哪），不是形势评估；该不该走仍由你判断。
+- `xq translate <记谱>` —— ICCS ↔ 中文记谱互译，消除路数换算摩擦。如 `xq translate h2e2`、`xq translate 炮二平五`。
 """
 
 
@@ -88,7 +97,7 @@ LOSE_RULE = "步时或局时超时即判负。"
 
 def render_agent_prompt(game_id, color, token, server, step_time="3 分钟",
                         xq_cmd="xq", step_timeout="pass",
-                        time_limit="15 分钟", increment=20):
+                        time_limit="15 分钟", increment=20, assist=False):
     xq_note = ("" if xq_cmd == "xq" else
                f"\n> 注意：本环境中 `xq` 命令的完整路径是 `{xq_cmd}`，用它替换下文所有 `xq`。\n")
     return TEMPLATE.format(
@@ -98,4 +107,5 @@ def render_agent_prompt(game_id, color, token, server, step_time="3 分钟",
         xq_cmd=xq_cmd, xq_note=xq_note,
         timeout_rule=PASS_RULE if step_timeout == "pass" else LOSE_RULE,
         time_limit=time_limit, increment=increment,
+        assist_section=ASSIST_SECTION if assist else "",
     )

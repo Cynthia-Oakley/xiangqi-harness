@@ -39,10 +39,11 @@ def setup_arena(red_name: str, black_name: str, server: str,
                 base_dir: str = "arena", xq_cmd: str = "xq",
                 time_limit: str = "15m", step_time: str = "3m",
                 increment: int = 20, step_timeout: str = "pass",
-                human: str | None = None) -> dict:
+                human: str | None = None, assist: bool = False) -> dict:
     """创建对局 + 工作目录（PROMPT.md + 预入座 .xqseat.json）。
 
     human="red"/"black" 时该方是人类玩家：不建目录，改返回 play_url 浏览器入座链接。
+    assist=True 开启辅助模式：攻防清点 + 走后自检（人类网页端同样可用）。
     """
     if human not in (None, "red", "black"):
         raise ValueError(f"human 只能是 red/black/None: {human!r}")
@@ -53,6 +54,7 @@ def setup_arena(red_name: str, black_name: str, server: str,
         "step_seconds": parse_duration(step_time),
         "increment": increment,
         "step_timeout": step_timeout,
+        "assist": assist,
     }, timeout=10)
     r.raise_for_status()
     g = r.json()
@@ -66,7 +68,8 @@ def setup_arena(red_name: str, black_name: str, server: str,
         prompt = render_agent_prompt(gid, color, g[f"{cn}_token"], server,
                                      step_time=step_time, xq_cmd=xq_cmd,
                                      step_timeout=step_timeout,
-                                     time_limit=time_limit, increment=increment)
+                                     time_limit=time_limit, increment=increment,
+                                     assist=assist)
         md = d / "PROMPT.md"
         md.write_text(prompt, encoding="utf-8")
         os.chmod(md, 0o600)
@@ -78,6 +81,8 @@ def setup_arena(red_name: str, black_name: str, server: str,
         dirs[cn] = str(d)
     out = {"game_id": gid, "dirs": dirs,
            "spectate": f"{server}/api/games/{gid}/spectate"}
+    if assist:
+        out["assist"] = True
     if human:
         out["human"] = human
         out["play_url"] = f"{server}/play/{gid}?token={g[f'{human}_token']}"

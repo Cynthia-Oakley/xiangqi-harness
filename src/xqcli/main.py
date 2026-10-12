@@ -81,6 +81,9 @@ def print_board_after(d: dict, headline: str):
     if d.get("pieces"):
         typer.echo(d["pieces"])
     typer.echo(headline)
+    if d.get("self_check"):            # 辅助模式：走后自检
+        typer.echo("── 走后自检 ──")
+        typer.echo(d["self_check"])
 
 
 @app.command()
@@ -109,10 +112,13 @@ def arena(red_name: str, black_name: str, port: int = 8000,
           time_limit: str = "15m", step_time: str = "3m", increment: int = 20,
           step_timeout: str = "pass",
           human: str = typer.Option(None, "--human",
-                                    help="人类座位: red 或 black；该方在浏览器对弈，不建 Agent 目录")):
+                                    help="人类座位: red 或 black；该方在浏览器对弈，不建 Agent 目录"),
+          assist: bool = typer.Option(False, "--assist",
+                                      help="辅助模式：攻防清点 xq inspect + 走后自检 + xq translate（人类网页端同样有）")):
     """一条命令搭好一场 Agent 对局：自动拉起服务器、建对局、建目录、预入座。
     --step-timeout pass=步时超时记停着一手（默认）；lose=超时即判负（正式规则）。
-    --human red/black=该方由人类在浏览器 /play 页面入座对弈。"""
+    --human red/black=该方由人类在浏览器 /play 页面入座对弈。
+    --assist=开启辅助模式（攻防清点/走后自检/记谱互译），双方对等。"""
     import sys
     from xqcli.arena import ensure_server, setup_arena
     if human is not None:
@@ -126,7 +132,7 @@ def arena(red_name: str, black_name: str, port: int = 8000,
     typer.echo("裁判服务器：" + ("已在运行，直接复用" if reused else f"已后台拉起（日志 {data_dir}/serve.log）"))
     info = setup_arena(red_name, black_name, server, base_dir, xq_cmd,
                        time_limit, step_time, increment, step_timeout,
-                       human=human)
+                       human=human, assist=assist)
     typer.echo(f"对局 {info['game_id']} 已创建，双方已预入座：")
     for cn, name in (("red", red_name), ("black", black_name)):
         if info["dirs"].get(cn):
@@ -137,6 +143,9 @@ def arena(red_name: str, black_name: str, port: int = 8000,
         typer.echo("你入座（打开链接）且对方 Agent join 后计时开始。")
     else:
         typer.echo("把各目录里的 PROMPT.md 喂给对应 harness（工作目录设为该目录）即可开赛。")
+    if assist:
+        typer.echo("辅助模式已开启：xq inspect <格> 攻防清点、play/commit 自动走后自检、"
+                   "xq translate 记谱互译（人类网页端同样可用）。")
     typer.echo(f"浏览器观战: {server}/watch/{info['game_id']}")
     typer.echo(f"文本观战: curl -N {info['spectate']}")
     key_file = Path(data_dir) / "admin_key.txt"
@@ -148,7 +157,7 @@ def arena(red_name: str, black_name: str, port: int = 8000,
 @app.command()
 def new(red_name: str, black_name: str, server: str = DEFAULT_SERVER,
         time_limit: str = "15m", step_time: str = "3m", increment: int = 20,
-        step_timeout: str = "pass"):
+        step_timeout: str = "pass", assist: bool = typer.Option(False, "--assist")):
     with bare_client(server) as c:
         r = c.post("/api/games", json={
             "red_name": red_name, "black_name": black_name,
@@ -156,6 +165,7 @@ def new(red_name: str, black_name: str, server: str = DEFAULT_SERVER,
             "step_seconds": parse_duration(step_time),
             "increment": increment,
             "step_timeout": step_timeout,
+            "assist": assist,
         })
     g = show(r)
     from xqcli.prompt_template import render_agent_prompt
@@ -164,7 +174,8 @@ def new(red_name: str, black_name: str, server: str = DEFAULT_SERVER,
     for color, cn in (("r", "red"), ("b", "black")):
         p = render_agent_prompt(g["game_id"], color, g[f"{cn}_token"], server,
                                 step_time, step_timeout=step_timeout,
-                                time_limit=time_limit, increment=increment)
+                                time_limit=time_limit, increment=increment,
+                                assist=assist)
         md = seats / f"{g['game_id']}-{cn}.md"
         md.write_text(p, encoding="utf-8")
         os.chmod(md, 0o600)               # 提示词文件含座位令牌
@@ -299,6 +310,45 @@ def board_image(out: str = "board.png"):
 def history_cmd(json_out: bool = typer.Option(False, "--json")):
     """log 的别名：整局着法记录（ICCS + 中文 + 用时）。"""
     log(json_out=json_out)
+
+
+@app.command()
+def inspect(square: str):
+    """辅助模式：落点攻防清点。如 xq inspect e4 —— 列出双方谁能攻击/守护该格。"""
+    seat = load_seat()
+    with client(seat) as c:
+        d = show(c.get(f"/api/games/{seat['game_id']}/inspect/{square}"))
+    typer.echo(d["report"])
+
+
+@app.command()
+def translate(expr: str):
+    """ICCS ↔ 中文记谱互译。如 xq translate h2e2 / xq translate 炮二平五。"""
+    from xiangqi.board import Board
+    from xiangqi.notation import from_chinese, is_valid_iccs, to_chinese
+    seat = load_seat()
+    with client(seat) as c:
+        st = show(c.get(f"/api/games/{seat['game_id']}/state"))
+    board = Board.from_fen(st["fen"])
+    expr = expr.strip()
+    if is_valid_iccs(expr):
+        from xiangqi.board import iccs_to_rc
+        fr, fc = iccs_to_rc(expr[:2])
+        if board.grid[fr][fc] is None:
+            typer.echo(f"错误: {expr[:2]} 格没有棋子", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"{expr} = {to_chinese(board, expr)}"
+                   f"（{'红方' if board.grid[fr][fc].isupper() else '黑方'}记谱）")
+        return
+    cands = from_chinese(board, expr)
+    if not cands:
+        typer.echo(f"「{expr}」在当前局面下没有匹配的走法（检查记谱与路数视角）", err=True)
+        raise typer.Exit(1)
+    if len(cands) == 1:
+        typer.echo(f"{expr} = {cands[0]}")
+    else:
+        typer.echo(f"「{expr}」有多个匹配（记谱有歧义，需前/后等修饰区分）: "
+                   + " ".join(cands))
 
 
 @app.command()

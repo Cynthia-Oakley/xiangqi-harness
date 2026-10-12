@@ -1,5 +1,5 @@
 from xiangqi.board import Board
-from xiangqi.notation import is_valid_iccs, to_chinese
+from xiangqi.notation import from_chinese, is_valid_iccs, to_chinese
 
 
 def test_is_valid_iccs():
@@ -43,3 +43,27 @@ def test_front_back_disambiguation():
     b = Board.from_fen("4k4/9/9/9/4C4/9/9/9/9/3KC4 w - - 0 1")
     assert to_chinese(b, "e5e6") == "前炮进一"   # (4,4) → (3,4)
     assert to_chinese(b, "e0f0") == "后炮平四"   # (9,4) → (9,5)
+
+
+def test_from_chinese_basic():
+    b = Board.initial()
+    assert from_chinese(b, "炮二平五") == ["h2e2"]
+    assert from_chinese(b, "马八进七") == ["b0c2"]
+    assert from_chinese(b, "马2进3") == ["b9c7"]      # 黑方视角路数
+    assert from_chinese(b, "兵七进一") == ["c3c4"]
+    assert from_chinese(b, "不存在着") == []
+
+
+def test_from_chinese_front_back_disambiguation():
+    """同列双炮：前炮/后炮 各归各位。"""
+    b = Board.from_fen("4k4/9/9/9/9/4C4/9/9/4C4/4K4 w - - 0 1")
+    assert from_chinese(b, "前炮进一") == ["e4e5"]
+    assert from_chinese(b, "后炮平四") == ["e1f1"]  # d=六路 f=四路
+
+
+def test_roundtrip_all_legal_moves():
+    """初始局面所有合法走法：ICCS→中文→ICCS 必须回到自己。"""
+    from xiangqi.rules import legal_moves
+    b = Board.initial()
+    for mv in legal_moves(b, "r"):
+        assert from_chinese(b, to_chinese(b, mv)) == [mv]

@@ -4,6 +4,7 @@ import secrets
 import threading
 import time
 
+from xiangqi.attack import self_check, square_report
 from xiangqi.board import Board, RED, BLACK, iccs_to_rc
 from xiangqi.notation import to_chinese
 from xiangqi.rules import apply_move, explain_illegal, game_result, in_check, legal_moves
@@ -42,10 +43,11 @@ def _fmt_secs(x):
 class Game:
     def __init__(self, gid, red_name, black_name,
                  base_seconds=900, step_seconds=180, increment=10,
-                 draw_halfmoves=120, step_timeout="pass"):
+                 draw_halfmoves=120, step_timeout="pass", assist=False):
         if step_timeout not in ("pass", "lose"):
             raise ValueError(f"step_timeout 只能是 pass 或 lose: {step_timeout!r}")
         self.id = gid
+        self.assist = assist           # 辅助模式：攻防清点 + 走后自检（棋谱会标记）
         self.board = Board.initial()
         self.names = {RED: red_name, BLACK: black_name}
         self.tokens = {RED: secrets.token_urlsafe(16), BLACK: secrets.token_urlsafe(16)}
@@ -238,6 +240,7 @@ class Game:
         color = self.pending["color"]
         iccs = self.pending["move"]
         captured = self.board.grid[iccs_to_rc(iccs[2:])[0]][iccs_to_rc(iccs[2:])[1]]
+        board_before = self.board
         entry = {
             "ply": len(self.history) + 1,
             "color": color,
@@ -252,6 +255,9 @@ class Game:
         self.turn_started = time.monotonic()
         self.draw_offered_by = None
         entry["fen"] = self.board.to_fen()
+        if self.assist:                # 走后自检（辅助模式）：对比走前/走后攻击图
+            entry["self_check"] = self_check(board_before, self.board, color,
+                                             iccs[:2], iccs[2:])
         self.history.append(entry)
         self.events.append({"event": "move",
                             "data": entry | {"clocks": self.clocks()}})
@@ -335,6 +341,16 @@ class Game:
             out.sort(key=lambda m: (m["piece"].upper(), m["iccs"][:2]))
             return out
 
+    # ---- 辅助模式：落点攻防清点 ----
+    def inspect_square(self, square):
+        with self.lock:
+            if not self.assist:
+                raise RuleError("本局未开启辅助模式（arena 创建时加 --assist）")
+            if (len(square) != 2 or square[0] not in "abcdefghi"
+                    or square[1] not in "0123456789"):
+                raise RuleError(f"格子坐标格式应为列+行（如 e4）: {square!r}")
+            return square_report(self.board, square)
+
     # ---- 思考流（只对观战者可见）----
     def _append_note(self, color, text):
         self.notes.append({
@@ -386,6 +402,7 @@ class Game:
             return {
                 "game_id": self.id,
                 "your_color": color,
+                "assist": self.assist,
                 "names": dict(self.names),
                 "turn": self.board.turn,
                 "started": self.started,
