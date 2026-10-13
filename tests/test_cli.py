@@ -54,6 +54,14 @@ def test_prompt_join_command_actually_runs(tmp_path, monkeypatch):
     assert "警告" in r.output              # 明确告知未向服务器注册
 
 
+def test_prompt_sandbox_section():
+    p = render_agent_prompt("g-1", "r", "tok123", "http://127.0.0.1:8000",
+                            sandbox=True)
+    assert "多步推演沙盒" in p and "xq probe" in p and "xq sim start" in p
+    assert "30 个模拟节点" in p and "不给评分" in p      # 只给事实 + 配额写入提示词
+    p_off = render_agent_prompt("g-1", "r", "tok123", "http://127.0.0.1:8000")
+    assert "沙盒" not in p_off                          # 默认关闭时不出现
+
 def test_parse_duration():
     from xqcli.main import parse_duration
     assert parse_duration("15m") == 900

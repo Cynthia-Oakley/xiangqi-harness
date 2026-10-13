@@ -78,7 +78,7 @@ TEMPLATE = """# 中国象棋对弈任务
 - 不得读取本平台（裁判服务器/规则库）的源代码，或利用其缺陷为自己获利。
 - 不得使用或现场编写象棋引擎/搜索程序辅助决策，纯凭自身推理下棋。
 - 认输：`xq resign`；提和：`xq offer-draw`；接受和棋：`xq accept-draw`。
-{assist_section}"""
+{assist_section}{sandbox_section}"""
 
 ASSIST_SECTION = """
 ## 本局已开启辅助模式（双方对等，人类选手也有同款工具）
@@ -89,6 +89,21 @@ ASSIST_SECTION = """
 - `xq translate <记谱>` —— ICCS ↔ 中文记谱互译，消除路数换算摩擦。如 `xq translate h2e2`、`xq translate 炮二平五`。
 """
 
+SANDBOX_SECTION = """
+## 本局已开启多步推演沙盒（双方对等）
+沙盒是从当前正式局面分叉的"草稿棋盘"：你在上面轮流假设双方走子，推演未来几步的变化线。
+**不影响正式对局，对手不可见，不落盘**；正式落子仍用 `play`/`move`+`commit`。
+- `xq probe h2e2 h9g7 …` —— 无状态推演：一次提交一条变化线，返回每步的合法性/中文着法/吃子/将军，
+  以及最终局面的棋盘视图。推荐主用它，一次命令一次往返。
+- `xq sim start` 分叉一个有状态分支 → `xq sim push h2e2` 假设一步 / `xq sim pop` 撤回一步 /
+  `xq sim board` 查看 / `xq sim end` 关闭。最多同时 2 个分支；正式落子后所有分支自动失效。
+- 沙盒只给事实：合法性、走后局面、吃子/将军/将死/困毙。**不给评分、不给推荐**——
+  选哪条线推演、如何判断局面好坏，全靠你自己的棋力。
+- **配额：每回合共 30 个模拟节点**（probe 每步、sim push 各占 1 个；中途非法/终局会退回未走的节点），
+  每次返回都显示剩余量，正式落子后恢复满。请把节点花在最值得算的变化线上。
+- 沙盒调用期间你的棋钟照常计时，时间分配仍由你自己权衡。
+"""
+
 
 PASS_RULE = ("步时超时会记「停着」一手：直接轮空给对方，耗时照扣局时且不加秒"
              "（被将军时不能停着，超时仍判负）；局时耗尽判负。")
@@ -97,7 +112,8 @@ LOSE_RULE = "步时或局时超时即判负。"
 
 def render_agent_prompt(game_id, color, token, server, step_time="3 分钟",
                         xq_cmd="xq", step_timeout="pass",
-                        time_limit="15 分钟", increment=20, assist=False):
+                        time_limit="15 分钟", increment=20, assist=False,
+                        sandbox=False):
     xq_note = ("" if xq_cmd == "xq" else
                f"\n> 注意：本环境中 `xq` 命令的完整路径是 `{xq_cmd}`，用它替换下文所有 `xq`。\n")
     return TEMPLATE.format(
@@ -108,4 +124,5 @@ def render_agent_prompt(game_id, color, token, server, step_time="3 分钟",
         timeout_rule=PASS_RULE if step_timeout == "pass" else LOSE_RULE,
         time_limit=time_limit, increment=increment,
         assist_section=ASSIST_SECTION if assist else "",
+        sandbox_section=SANDBOX_SECTION if sandbox else "",
     )

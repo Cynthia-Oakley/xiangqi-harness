@@ -43,11 +43,15 @@ def _fmt_secs(x):
 class Game:
     def __init__(self, gid, red_name, black_name,
                  base_seconds=900, step_seconds=180, increment=10,
-                 draw_halfmoves=120, step_timeout="pass", assist=False):
+                 draw_halfmoves=120, step_timeout="pass", assist=False,
+                 sandbox_budget=0):
         if step_timeout not in ("pass", "lose"):
             raise ValueError(f"step_timeout 只能是 pass 或 lose: {step_timeout!r}")
         self.id = gid
         self.assist = assist           # 辅助模式：攻防清点 + 走后自检（棋谱会标记）
+        self.sandbox_budget = int(sandbox_budget)   # 每回合沙盒推演节点配额；0=未开启
+        self.sim_remaining = {RED: self.sandbox_budget, BLACK: self.sandbox_budget}
+        self.sims = {RED: {}, BLACK: {}}            # color → {sim_id: [Board, ...]}（栈底=分支点）
         self.board = Board.initial()
         self.names = {RED: red_name, BLACK: black_name}
         self.tokens = {RED: secrets.token_urlsafe(16), BLACK: secrets.token_urlsafe(16)}
@@ -155,6 +159,7 @@ class Game:
             self.board = nb
             self.turn_started = time.monotonic()
             self.draw_offered_by = None
+            self._reset_sandbox()                       # 停着也推进局面：分支失效、配额恢复
             entry = {
                 "ply": len(self.history) + 1,
                 "color": side,
@@ -178,6 +183,175 @@ class Game:
         self.result_reason = reason
         self.events.append({"event": "result",
                             "data": {"result": result, "reason": reason}})
+
+    # ---- 多步推演沙盒（只给事实，不影响正式对局）----
+    MAX_SIMS_PER_SIDE = 2
+
+    def _reset_sandbox(self):
+        """正式局面推进后：配额恢复满，所有沙盒分支失效（它们分叉自旧局面）。"""
+        if not self.sandbox_budget:
+            return
+        self.sim_remaining = {RED: self.sandbox_budget, BLACK: self.sandbox_budget}
+        self.sims = {RED: {}, BLACK: {}}
+
+    def _require_sandbox(self, color):
+        if not self.sandbox_budget:
+            raise RuleError("本局未开启沙盒推演（创建对局时加 --sandbox）")
+        self.settle_timeout()
+        if self.result:
+            raise GameOver("对局已结束")
+        if not self.started:
+            raise RuleError("对局尚未开始：双方入座后才能使用沙盒")
+
+    def _charge(self, color, n):
+        left = self.sim_remaining[color]
+        if left < n:
+            raise RuleError(
+                f"沙盒配额不足：本回合还剩 {left} 个节点，本次需要 {n} "
+                f"（每回合共 {self.sandbox_budget} 个，正式落子后恢复）")
+        self.sim_remaining[color] -= n
+
+    def _terminal_fact(self, board):
+        """沙盘局面的终局事实（将死/困毙/自然限着）；未终局返回 None。"""
+        res = game_result(board, self.draw_halfmoves)
+        if not res:
+            return None
+        if res == "draw":
+            return "和棋（自然限着）"
+        kind = "将死" if in_check(board, board.turn) else "困毙"
+        return f"{'红' if res == 'red_win' else '黑'}方胜（{kind}）"
+
+    def _run_line(self, board, moves):
+        """在 board 副本上依次假设双方走子，返回 (每步事实, 最终棋盘, 是否全部合法)。
+        遇非法走法立即中止并附原因。只给事实：合法性/中文着法/吃子/将军/终局。"""
+        steps, cur = [], board
+        for i, iccs in enumerate(moves, 1):
+            side = cur.turn
+            reason = explain_illegal(cur, side, iccs)
+            if reason:
+                steps.append({"ply": i, "iccs": iccs, "color": side,
+                              "legal": False, "reason": reason})
+                return steps, cur, False
+            chinese = to_chinese(cur, iccs)
+            tr, tc = iccs_to_rc(iccs[2:])
+            captured = cur.grid[tr][tc]
+            cur = apply_move(cur, iccs)
+            step = {"ply": i, "iccs": iccs, "color": side, "legal": True,
+                    "chinese": chinese, "captured": captured,
+                    "gives_check": in_check(cur, cur.turn)}
+            fact = self._terminal_fact(cur)
+            if fact:
+                step["terminal"] = fact
+                steps.append(step)
+                return steps, cur, True
+            steps.append(step)
+        return steps, cur, True
+
+    def _sandbox_status(self, color):
+        return {"budget_total": self.sandbox_budget,
+                "budget_left": self.sim_remaining[color],
+                "sims": {sid: len(stack) - 1 for sid, stack in self.sims[color].items()}}
+
+    def _line_view(self, color, steps, final):
+        """一条推演线的完整返回：每步事实 + 终局视图（按请求方视角渲染）。"""
+        out = {"steps": steps,
+               "ascii": render_ascii(final, perspective=color),
+               "pieces": piece_listing(final),
+               "fen": final.to_fen(),
+               "turn": final.turn,
+               "sandbox": self._sandbox_status(color),
+               "time_status": self.time_status(color)}
+        fact = self._terminal_fact(final)
+        if fact:
+            out["terminal"] = fact
+        return out
+
+    def probe(self, color, moves):
+        """无状态推演：从当前正式局面提交一整条变化线，一次返回。"""
+        with self.lock:
+            self._require_sandbox(color)
+            moves = [m.strip() for m in moves if m and m.strip()]
+            if not moves:
+                raise RuleError("probe 需要至少一步走法")
+            self._charge(color, len(moves))
+            steps, final, _ = self._run_line(self.board, moves)
+            self.sim_remaining[color] += len(moves) - len(steps)  # 提前中止的节点退回
+            return self._line_view(color, steps, final)
+
+    def _sim(self, color, sid):
+        try:
+            return self.sims[color][sid]
+        except KeyError:
+            raise RuleError(f"沙盒分支不存在或已随正式落子失效: {sid}")
+
+    def _sim_view(self, color, sid, last=None, note=None):
+        stack = self.sims[color][sid]
+        b = stack[-1]
+        out = {"sim_id": sid, "depth": len(stack) - 1,
+               "turn": b.turn,
+               "ascii": render_ascii(b, perspective=color),
+               "pieces": piece_listing(b),
+               "fen": b.to_fen(),
+               "sandbox": self._sandbox_status(color),
+               "time_status": self.time_status(color)}
+        fact = self._terminal_fact(b)
+        if fact:
+            out["terminal"] = fact
+        if last:
+            out["last"] = last
+        if note:
+            out["note"] = note
+        return out
+
+    def sim_start(self, color):
+        """从当前正式局面分叉出一个有状态沙盒分支（本身不占节点）。"""
+        with self.lock:
+            self._require_sandbox(color)
+            if len(self.sims[color]) >= self.MAX_SIMS_PER_SIDE:
+                raise RuleError(
+                    f"沙盒分支最多同时 {self.MAX_SIMS_PER_SIDE} 个，先 sim end 一个再开新的")
+            sid = "s" + secrets.token_urlsafe(6)
+            self.sims[color][sid] = [self.board.copy()]
+            return self._sim_view(
+                color, sid,
+                note=f"已从当前局面分支，轮到{'红' if self.board.turn == RED else '黑'}方假设走子")
+
+    def sim_push(self, color, sid, iccs):
+        with self.lock:
+            self._require_sandbox(color)
+            stack = self._sim(color, sid)
+            self._charge(color, 1)
+            steps, final, ok = self._run_line(stack[-1], [iccs])
+            if not ok:
+                raise RuleError(f"非法走法: {iccs} —— {steps[0]['reason']}"
+                                "（配额已计 1 节点，分支未变）")
+            stack.append(final)
+            return self._sim_view(color, sid, last=steps[0])
+
+    def sim_pop(self, color, sid):
+        with self.lock:
+            self._require_sandbox(color)
+            stack = self._sim(color, sid)
+            if len(stack) == 1:
+                raise RuleError("已在分支起点，无法再撤回")
+            stack.pop()
+            return self._sim_view(color, sid,
+                                  note=f"已撤回一步假设（当前深度 {len(stack) - 1}）")
+
+    def sim_board(self, color, sid):
+        with self.lock:
+            self._require_sandbox(color)
+            self._sim(color, sid)
+            return self._sim_view(color, sid)
+
+    def sim_end(self, color, sid):
+        with self.lock:
+            self._require_sandbox(color)
+            self._sim(color, sid)
+            del self.sims[color][sid]
+            return {"ok": True, "ended": sid,
+                    "sandbox": self._sandbox_status(color),
+                    "time_status": self.time_status(color)}
 
     def pop_events(self):
         """取出并清空待广播事件（由服务层负责广播与落盘）。"""
@@ -254,6 +428,7 @@ class Game:
         self.remaining[color] = self.remaining[color] - elapsed + self.increment
         self.turn_started = time.monotonic()
         self.draw_offered_by = None
+        self._reset_sandbox()
         entry["fen"] = self.board.to_fen()
         if self.assist:                # 走后自检（辅助模式）：对比走前/走后攻击图
             entry["self_check"] = self_check(board_before, self.board, color,
@@ -399,7 +574,7 @@ class Game:
     def state_for(self, color):
         with self.lock:
             self.settle_timeout()        # 查询也结算超时，避免对局悬置
-            return {
+            out = {
                 "game_id": self.id,
                 "your_color": color,
                 "assist": self.assist,
@@ -425,3 +600,6 @@ class Game:
                 "clocks": self.clocks(),
                 "draw_offered": self.draw_offered_by is not None and self.draw_offered_by != color,
             }
+            if self.sandbox_budget:
+                out["sandbox"] = self._sandbox_status(color)
+            return out

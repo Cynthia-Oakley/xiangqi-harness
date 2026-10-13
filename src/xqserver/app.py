@@ -135,20 +135,25 @@ def create_app(data_dir="data", idle_minutes: float = 60, on_shutdown=None) -> F
         draw_halfmoves: int = 120
         step_timeout: str = "pass"
         assist: bool = False
+        sandbox_budget: int = 0          # 每回合沙盒推演节点配额；0=不开启
 
     @app.post("/api/games")
     async def new_game(body: NewGame):
         if body.step_timeout not in ("pass", "lose"):
             raise HTTPException(400, "step_timeout 只能是 pass 或 lose")
+        if body.sandbox_budget < 0:
+            raise HTTPException(400, "sandbox_budget 不能为负")
         g = store.create(body.red_name, body.black_name,
                          base_seconds=body.base_seconds,
                          step_seconds=body.step_seconds,
                          increment=body.increment,
                          draw_halfmoves=body.draw_halfmoves,
                          step_timeout=body.step_timeout,
-                         assist=body.assist)
+                         assist=body.assist,
+                         sandbox_budget=body.sandbox_budget)
         return {"game_id": g.id, "red_token": g.tokens["r"],
                 "black_token": g.tokens["b"], "assist": g.assist,
+                "sandbox_budget": g.sandbox_budget,
                 "watch_url": f"/api/games/{g.id}/spectate"}
 
     @app.post("/api/games/{gid}/join")
@@ -212,6 +217,63 @@ def create_app(data_dir="data", idle_minutes: float = 60, on_shutdown=None) -> F
         g = get_game(gid)
         seat_color(g, token or x_seat_token)            # 仅对局双方可查
         return {"square": square, "report": g.inspect_square(square)}
+
+    # ---- 多步推演沙盒：不影响正式对局，不广播、不落盘，双方互不可见 ----
+    class ProbeIn(BaseModel):
+        moves: list[str]
+
+    @app.post("/api/games/{gid}/probe")
+    async def probe(gid: str, body: ProbeIn, x_seat_token: str | None = Header(None)):
+        """无状态推演：从当前局面提交一整条变化线，返回每步事实 + 终局视图。"""
+        g = get_game(gid)
+        try:
+            return g.probe(seat_color(g, x_seat_token), body.moves)
+        finally:
+            flush_events(g)            # settle_timeout 可能结算出停着/终局
+
+    @app.post("/api/games/{gid}/sim/start")
+    async def sim_start(gid: str, x_seat_token: str | None = Header(None)):
+        g = get_game(gid)
+        try:
+            return g.sim_start(seat_color(g, x_seat_token))
+        finally:
+            flush_events(g)
+
+    class SimPushIn(BaseModel):
+        move: str
+
+    @app.post("/api/games/{gid}/sim/{sid}/push")
+    async def sim_push(gid: str, sid: str, body: SimPushIn,
+                       x_seat_token: str | None = Header(None)):
+        g = get_game(gid)
+        try:
+            return g.sim_push(seat_color(g, x_seat_token), sid, body.move)
+        finally:
+            flush_events(g)
+
+    @app.post("/api/games/{gid}/sim/{sid}/pop")
+    async def sim_pop(gid: str, sid: str, x_seat_token: str | None = Header(None)):
+        g = get_game(gid)
+        try:
+            return g.sim_pop(seat_color(g, x_seat_token), sid)
+        finally:
+            flush_events(g)
+
+    @app.get("/api/games/{gid}/sim/{sid}")
+    async def sim_board(gid: str, sid: str, x_seat_token: str | None = Header(None)):
+        g = get_game(gid)
+        try:
+            return g.sim_board(seat_color(g, x_seat_token), sid)
+        finally:
+            flush_events(g)
+
+    @app.post("/api/games/{gid}/sim/{sid}/end")
+    async def sim_end(gid: str, sid: str, x_seat_token: str | None = Header(None)):
+        g = get_game(gid)
+        try:
+            return g.sim_end(seat_color(g, x_seat_token), sid)
+        finally:
+            flush_events(g)
 
     class MoveIn(BaseModel):
         move: str
