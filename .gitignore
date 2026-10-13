@@ -3,3 +3,4 @@ data/
 seats/
 __pycache__/
 *.pyc
+*.egg-info/

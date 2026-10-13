@@ -9,7 +9,7 @@ import typer
 
 from xiangqi.textboard import GLYPHS
 
-app = typer.Typer(help="Xiangqi Arena CLI")
+app = typer.Typer(help="Xiangqi Harness CLI")
 SEAT_FILE = Path(".xqseat.json")
 DEFAULT_SERVER = "http://127.0.0.1:8000"
 

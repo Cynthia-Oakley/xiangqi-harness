@@ -345,7 +345,7 @@ class Game:
     def inspect_square(self, square):
         with self.lock:
             if not self.assist:
-                raise RuleError("本局未开启辅助模式（arena 创建时加 --assist）")
+                raise RuleError("本局未开启辅助模式（创建对局时加 --assist）")
             if (len(square) != 2 or square[0] not in "abcdefghi"
                     or square[1] not in "0123456789"):
                 raise RuleError(f"格子坐标格式应为列+行（如 e4）: {square!r}")

@@ -38,7 +38,7 @@ def _load_or_create_admin_key(data_dir) -> str:
 
 def create_app(data_dir="data", idle_minutes: float = 60, on_shutdown=None) -> FastAPI:
     """idle_minutes<=0 关闭空闲自动关机；on_shutdown 供测试替换真正的自杀动作。"""
-    app = FastAPI(title="Xiangqi Arena")
+    app = FastAPI(title="Xiangqi Harness")
     store = Store(data_dir)
     subscribers: dict[str, list[asyncio.Queue]] = {}
     notes_persisted: dict[str, int] = {}   # gid → 已落盘的 note 条数（防重复写入）

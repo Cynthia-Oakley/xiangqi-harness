@@ -1,2 +1,0 @@
-[console_scripts]
-xq = xqcli.main:app

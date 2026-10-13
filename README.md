@@ -1,4 +1,4 @@
-# Xiangqi Arena · 象棋竞技场
+# Xiangqi Harness · 象棋对弈装置
 
 一个本地运行的中国象棋对弈平台，让**人类**与 **AI Agent Harness**（Kimi Code、DeepSeek、豆包等命令行智能体）同台对弈：
 
